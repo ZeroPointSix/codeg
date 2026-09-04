@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
   __clearRegisteredBackendScopedStoreResets,
+  getBackendScopeEpoch,
+  isCurrentBackendScopeEpoch,
   registerBackendScopedStoreReset,
   resetBackendScopedStores,
 } from "./backend-scoped-store-reset"
@@ -37,5 +39,13 @@ describe("backend-scoped store reset registry", () => {
 
   it("is a no-op when nothing is registered (e.g. a git-operation window)", () => {
     expect(() => resetBackendScopedStores()).not.toThrow()
+  })
+
+  it("invalidates epochs captured before the reset", () => {
+    const epoch = getBackendScopeEpoch()
+    expect(isCurrentBackendScopeEpoch(epoch)).toBe(true)
+    resetBackendScopedStores()
+    expect(isCurrentBackendScopeEpoch(epoch)).toBe(false)
+    expect(isCurrentBackendScopeEpoch(getBackendScopeEpoch())).toBe(true)
   })
 })

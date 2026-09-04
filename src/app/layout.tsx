@@ -13,6 +13,7 @@ import { OverlayScrollbarsInit } from "@/components/overlay-scrollbars-init"
 import { ClipboardFallbackInit } from "@/components/clipboard-fallback-init"
 import { WebConnectionGuard } from "@/components/connection/web-connection-guard"
 import { WindowResizeGrips } from "@/components/layout/window-resize-grips"
+import { OpenABTransportProvider } from "@/components/providers/openab-transport-provider"
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -69,11 +70,13 @@ export default async function RootLayout({
               disableTransitionOnChange
             >
               <AppearanceProvider>
-                <OverlayScrollbarsInit />
-                <ClipboardFallbackInit />
-                <WebConnectionGuard />
-                <WindowResizeGrips />
-                {children}
+                <OpenABTransportProvider>
+                  <OverlayScrollbarsInit />
+                  <ClipboardFallbackInit />
+                  <WebConnectionGuard />
+                  <WindowResizeGrips />
+                  {children}
+                </OpenABTransportProvider>
               </AppearanceProvider>
             </ThemeProvider>
           </AppI18nProvider>

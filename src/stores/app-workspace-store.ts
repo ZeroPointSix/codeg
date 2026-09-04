@@ -1,5 +1,9 @@
 import { create } from "zustand"
-import { registerBackendScopedStoreReset } from "@/stores/backend-scoped-store-reset"
+import {
+  getBackendScopeEpoch,
+  isCurrentBackendScopeEpoch,
+  registerBackendScopedStoreReset,
+} from "@/stores/backend-scoped-store-reset"
 import {
   applySidebarLayout as apiApplySidebarLayout,
   createFolderGroup as apiCreateFolderGroup,
@@ -340,6 +344,7 @@ export const useAppWorkspaceStore = create<AppWorkspaceStoreState>()(
     activeFolderId: null,
 
     fetchFolders: async () => {
+      const epoch = getBackendScopeEpoch()
       set({ foldersLoading: true })
       // Stamped BEFORE the requests go out: anything removed from here on is
       // newer than the snapshot they return.
@@ -355,6 +360,11 @@ export const useAppWorkspaceStore = create<AppWorkspaceStoreState>()(
           // visibly jump once the other arrives).
           listFolderGroups(),
         ])
+        // A backend-scope reset (OpenAB target switch) bumps the epoch and
+        // zeroes `folderFetchSeq`. Without this check an older in-flight
+        // snapshot would look newer than the reset baseline and resurrect the
+        // previous target's folders.
+        if (!isCurrentBackendScopeEpoch(epoch)) return
         // Both lists are replaced wholesale, so a snapshot that predates a
         // removal would resurrect the folder. Subtract only what was removed
         // AFTER this snapshot was requested — an earlier removal is already
@@ -392,19 +402,26 @@ export const useAppWorkspaceStore = create<AppWorkspaceStoreState>()(
       } catch (err) {
         console.error("[AppWorkspace] fetchFolders failed:", err)
       } finally {
-        set({ foldersLoading: false, foldersHydrated: true })
+        if (isCurrentBackendScopeEpoch(epoch)) {
+          set({ foldersLoading: false, foldersHydrated: true })
+        }
       }
     },
 
     refreshConversations: async () => {
+      const epoch = getBackendScopeEpoch()
       set({ conversationsLoading: true })
       try {
         const list = await listAllConversations()
+        if (!isCurrentBackendScopeEpoch(epoch)) return
         set({ ...withConversations(list), conversationsError: null })
       } catch (err) {
+        if (!isCurrentBackendScopeEpoch(epoch)) return
         set({ conversationsError: toErrorMessage(err) })
       } finally {
-        set({ conversationsLoading: false })
+        if (isCurrentBackendScopeEpoch(epoch)) {
+          set({ conversationsLoading: false })
+        }
       }
     },
 
@@ -901,10 +918,9 @@ export const useAppWorkspaceStore = create<AppWorkspaceStoreState>()(
  * lifetime and is never reset.
  */
 export function resetAppWorkspaceStore() {
-  // NOTE: this clears state only; `fetchFolders` / `refreshConversations` have no
-  // backend epoch, so a pre-reset in-flight fetch could re-commit stale data. Moot
-  // today (the backend-identity guard never fires); a real in-place backend switch
-  // would need per-store fetch epochs. See `RemoteConnectionGate`.
+  // Clears store state only. In-flight `fetchFolders` / `refreshConversations`
+  // capture `getBackendScopeEpoch()` and refuse to commit when
+  // `resetBackendScopedStores()` has moved the epoch (OpenAB target switch).
   deletedIds.clear()
   removedFolderSeq.clear()
   deletedGroupSeq.clear()
