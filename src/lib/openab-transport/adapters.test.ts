@@ -55,10 +55,17 @@ function transcript(): OpenABTranscriptSnapshot {
           content: [{ type: "text", text: "ok" }],
         },
       },
+      {
+        entry_id: "assistant-1",
+        sequence: 4,
+        role: "assistant",
+        content: "new",
+        status: "streaming",
+      },
     ],
     overflowed: false,
     oldest_sequence: 1,
-    next_sequence: 4,
+    next_sequence: 5,
     stream_generation: "generation-a",
     stream_next_sequence: 12,
   }
@@ -74,7 +81,7 @@ describe("OpenAB adapters", () => {
 
   it("keeps only the latest revision of each transcript entry", () => {
     expect(latestTranscriptEntries(transcript())).toMatchObject([
-      { entry_id: "assistant-1", sequence: 2, content: "new" },
+      { entry_id: "assistant-1", sequence: 4, content: "new" },
       { entry_id: "tool-1", sequence: 3 },
     ])
   })
