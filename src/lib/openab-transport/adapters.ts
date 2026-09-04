@@ -14,29 +14,34 @@ import type {
   OpenABTranscriptSnapshot,
 } from "./types"
 
-export const OPENAB_FOLDER_ID = 0
-
-function opaqueConversationId(sessionId: string): number {
-  return sessionId as unknown as number
-}
+export const OPENAB_FOLDER_ID = 954_000_000
 
 export function mapOpenABStatus(status: string): LiveSessionSnapshot["status"] {
-  if (status === "running" || status === "prompting") return "prompting"
-  if (status === "error") return "error"
+  if (["running", "starting", "busy", "prompting"].includes(status)) {
+    return "prompting"
+  }
+  if (status === "error" || status === "failed") return "error"
+  if (status === "disconnected") return "disconnected"
   return "connected"
 }
 
 export function toConversationSummary(
   session: OpenABSessionSnapshot,
+  conversationId: number,
   messageCount = 0
 ): DbConversationSummary {
   return {
-    id: opaqueConversationId(session.session_id),
+    id: conversationId,
     folder_id: OPENAB_FOLDER_ID,
     title: session.title ?? session.profile_name ?? session.session_id,
     title_locked: false,
-    agent_type: session.agent,
-    status: session.status === "error" ? "cancelled" : "in_progress",
+    agent_type: "openab",
+    status:
+      session.status === "error" || session.status === "failed"
+        ? "cancelled"
+        : mapOpenABStatus(session.status) === "prompting"
+          ? "in_progress"
+          : "completed",
     kind: "chat",
     model: session.model,
     git_branch: null,
@@ -46,6 +51,10 @@ export function toConversationSummary(
     created_at: session.created_at,
     updated_at: session.updated_at,
     pinned_at: null,
+    parent_id: null,
+    parent_tool_use_id: null,
+    delegation_call_id: null,
+    origin_cwd: null,
   }
 }
 
@@ -71,6 +80,13 @@ function toolText(tool: OpenABToolCall | undefined): string | null {
   return text || null
 }
 
+function normalizeToolStatus(status: string): ToolCallState["status"] {
+  if (status === "running" || status === "streaming") return "in_progress"
+  if (status === "failed" || status === "error") return "failed"
+  if (status === "completed") return "completed"
+  return "pending"
+}
+
 function entryBlocks(entry: OpenABTranscriptEntry): ContentBlock[] {
   if (entry.role !== "tool") {
     return [
@@ -87,8 +103,9 @@ function entryBlocks(entry: OpenABTranscriptEntry): ContentBlock[] {
       type: "tool_use",
       tool_use_id: toolCallId,
       tool_name: title,
-      input_preview: tool?.rawInput ? JSON.stringify(tool.rawInput) : null,
-      status: entry.status,
+      input_preview:
+        tool?.rawInput === undefined ? null : JSON.stringify(tool.rawInput),
+      status: normalizeToolStatus(entry.status),
     },
   ]
   const result = toolText(entry.tool_result ?? tool)
@@ -122,12 +139,7 @@ function toToolCallState(entry: OpenABTranscriptEntry): ToolCallState {
     id,
     kind: "other",
     label: tool?.title ?? entry.content ?? "Tool",
-    status:
-      entry.status === "running"
-        ? "in_progress"
-        : entry.status === "failed"
-          ? "failed"
-          : "completed",
+    status: normalizeToolStatus(entry.status),
     input: tool?.rawInput ?? null,
     output: result
       ? entry.status === "failed"
@@ -166,18 +178,24 @@ function latestLiveMessage(
 export function toLiveSessionSnapshot(
   session: OpenABSessionSnapshot,
   transcript: OpenABTranscriptSnapshot,
+  conversationId: number,
   eventSeq?: number
 ): LiveSessionSnapshot {
   const entries = latestTranscriptEntries(transcript)
-  const tools = entries.filter((entry) => entry.role === "tool")
+  const tools = entries
+    .filter((entry) => entry.role === "tool")
+    .map(toToolCallState)
+    .filter(
+      (tool) => tool.status === "pending" || tool.status === "in_progress"
+    )
   return {
     connection_id: session.session_id,
-    conversation_id: opaqueConversationId(session.session_id),
+    conversation_id: conversationId,
     folder_id: OPENAB_FOLDER_ID,
     status: mapOpenABStatus(session.status),
     external_id: session.session_id,
     live_message: latestLiveMessage(entries),
-    active_tool_calls: tools.map(toToolCallState),
+    active_tool_calls: tools,
     pending_permission: null,
     pending_question: null,
     pending_plan_approval: null,
@@ -199,18 +217,31 @@ export function toLiveSessionSnapshot(
     fork_supported: false,
     available_commands: [],
     selectors_ready: true,
+    config_stale: false,
+    config_stale_kind: null,
+    last_error: null,
+    session_failures: [],
+    async_tasks: [],
+    goal_actions: [],
     event_seq: eventSeq ?? Math.max(0, transcript.stream_next_sequence - 1),
   }
 }
 
 export function toConversationDetail(
   session: OpenABSessionSnapshot,
-  transcript: OpenABTranscriptSnapshot
+  transcript: OpenABTranscriptSnapshot,
+  conversationId: number
 ): DbConversationDetail {
   const turns = transcriptToTurns(transcript)
   return {
-    summary: toConversationSummary(session, turns.length),
+    summary: toConversationSummary(session, conversationId, turns.length),
     turns,
-    transcript_watermark: transcript.next_sequence - 1,
+    session_stats: null,
+    transcript_watermark: transcript.next_sequence,
+    turns_offset: 0,
+    turns_total: turns.length,
+    assistant_turns_before_offset: 0,
+    prefix_hash: "0000000000000000",
+    uncovered_prefix_max_ts: null,
   }
 }
