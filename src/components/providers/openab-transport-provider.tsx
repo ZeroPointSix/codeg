@@ -37,7 +37,11 @@ export function OpenABTransportProvider({ children }: { children: ReactNode }) {
 
     const token = localStorage.getItem("codeg_token")
     if (!token) {
-      markReady()
+      if (pathname.startsWith("/workspace")) {
+        router.replace("/login")
+      } else {
+        markReady()
+      }
       return () => {
         mounted = false
       }
@@ -61,7 +65,7 @@ export function OpenABTransportProvider({ children }: { children: ReactNode }) {
       mounted = false
       clearOpenABTransport()
     }
-  }, [router])
+  }, [pathname, router])
 
   if (!ready) {
     return (
