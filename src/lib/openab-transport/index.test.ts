@@ -6,7 +6,11 @@ import type {
 } from "@/lib/types"
 import { OpenABEventStream, parseSseChunk } from "./event-stream"
 import { OpenABTransport } from "./index"
-import type { OpenABSessionSnapshot, OpenABTranscriptSnapshot } from "./types"
+import type {
+  OpenABSessionSnapshot,
+  OpenABSseEvent,
+  OpenABTranscriptSnapshot,
+} from "./types"
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>()
@@ -165,6 +169,9 @@ describe("OpenABTransport", () => {
       "get_folder_conversation",
       { conversationId }
     )
+    await transport.call<DbConversationDetail>("get_folder_conversation", {
+      conversationId: "1",
+    })
     await transport.call("acp_prompt", {
       connectionId,
       blocks: [{ type: "text", text: "  Run the tests  " }],
@@ -176,6 +183,9 @@ describe("OpenABTransport", () => {
     expect(detail.summary.external_id).toBe(connectionId)
     expect(calls.map((call) => call.url)).toContain(
       "https://openab.test/api/v1/sessions/admin%3Afixture-session/transcript"
+    )
+    expect(calls.map((call) => call.url)).toContain(
+      "https://openab.test/api/v1/sessions/1/transcript"
     )
     const message = calls.find((call) => call.url.endsWith("/messages"))
     expect(message?.init.body).toBe(JSON.stringify({ text: "Run the tests" }))
@@ -234,9 +244,7 @@ describe("OpenAB SSE", () => {
   })
 
   it("refetches global and selected state after a cursor reset", async () => {
-    let listener:
-      | ((event: { id: string | null; event: string; data: unknown }) => void)
-      | null = null
+    let listener: (event: OpenABSseEvent) => void = () => {}
     const snapshot = { event_seq: 7 } as LiveSessionSnapshot
     const loadSnapshot = vi.fn(async () => snapshot)
     const recover = vi.fn(async () => {})
@@ -254,13 +262,14 @@ describe("OpenAB SSE", () => {
       { sinceSeq: 0 },
       {
         onSnapshot,
+        onReplay: vi.fn(),
         onEvent: vi.fn(),
         onDetached: vi.fn(),
       }
     )
     await vi.waitFor(() => expect(onSnapshot).toHaveBeenCalledOnce())
 
-    listener?.({
+    listener({
       id: "new-generation:1",
       event: "cursor_reset",
       data: { sequence: 1 },
