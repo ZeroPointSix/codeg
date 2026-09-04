@@ -4,7 +4,10 @@ import {
   toLiveSessionSnapshot,
   transcriptToTurns,
 } from "./adapters"
-import type { OpenABSessionSnapshot, OpenABTranscriptSnapshot } from "./types"
+import type {
+  OpenABSessionSnapshot,
+  OpenABTranscriptSnapshot,
+} from "./types"
 
 const session: OpenABSessionSnapshot = {
   session_id: "slack:team/thread:001",
@@ -62,10 +65,10 @@ function transcript(): OpenABTranscriptSnapshot {
 }
 
 describe("OpenAB adapters", () => {
-  it("preserves opaque session identifiers without numeric conversion", () => {
-    const summary = toConversationSummary(session)
+  it("keeps opaque session IDs external to the numeric UI identity", () => {
+    const summary = toConversationSummary(session, 42)
 
-    expect(summary.id).toBe(session.session_id)
+    expect(summary.id).toBe(42)
     expect(summary.external_id).toBe(session.session_id)
   })
 
@@ -78,7 +81,7 @@ describe("OpenAB adapters", () => {
 
   it("maps streaming output and tool results into existing workbench shapes", () => {
     const turns = transcriptToTurns(transcript())
-    const live = toLiveSessionSnapshot(session, transcript())
+    const live = toLiveSessionSnapshot(session, transcript(), 42)
 
     expect(turns).toHaveLength(2)
     expect(turns[1].blocks).toMatchObject([
@@ -95,6 +98,7 @@ describe("OpenAB adapters", () => {
       },
     ])
     expect(live.connection_id).toBe(session.session_id)
+    expect(live.conversation_id).toBe(42)
     expect(live.live_message?.content).toEqual([{ kind: "text", text: "new" }])
     expect(live.event_seq).toBe(11)
   })
