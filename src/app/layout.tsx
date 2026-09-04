@@ -70,11 +70,13 @@ export default async function RootLayout({
               disableTransitionOnChange
             >
               <AppearanceProvider>
-                <OverlayScrollbarsInit />
-                <ClipboardFallbackInit />
-                <WebConnectionGuard />
-                <WindowResizeGrips />
-                <OpenABTransportProvider>{children}</OpenABTransportProvider>
+                <OpenABTransportProvider>
+                  <OverlayScrollbarsInit />
+                  <ClipboardFallbackInit />
+                  <WebConnectionGuard />
+                  <WindowResizeGrips />
+                  {children}
+                </OpenABTransportProvider>
               </AppearanceProvider>
             </ThemeProvider>
           </AppI18nProvider>
