@@ -1,11 +1,15 @@
 import { detectEnvironment } from "./detect"
 import type { RemoteTransportConfig, Transport } from "./types"
+import type { OpenABTransportConfig } from "../openab-transport/types"
 
 export type { RemoteTransportConfig, Transport, UnsubscribeFn } from "./types"
+export type { OpenABTransportConfig } from "../openab-transport/types"
 
 let _shellTransport: Transport | null = null
 let _remoteTransport: Transport | null = null
 let _remoteConfig: RemoteTransportConfig | null = null
+let _openabTransport: Transport | null = null
+let _openabConfig: OpenABTransportConfig | null = null
 
 function createTauriTransport(): Transport {
   // Use dynamic require to avoid bundling tauri deps in web mode.
@@ -47,10 +51,30 @@ export function configureRemoteDesktopTransport(
   _remoteTransport = new RemoteDesktopTransport(config)
 }
 
+export function configureOpenABTransport(
+  config: OpenABTransportConfig
+): void {
+  _openabTransport?.destroy?.()
+  _openabConfig = config
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { OpenABTransport } = require("../openab-transport") as {
+    OpenABTransport: new (config: OpenABTransportConfig) => Transport
+  }
+  _openabTransport = new OpenABTransport(config)
+}
+
+export function clearOpenABTransport(): void {
+  _openabTransport?.destroy?.()
+  _openabTransport = null
+  _openabConfig = null
+}
+
 export function clearRemoteDesktopTransport(): void {
   _remoteTransport?.destroy?.()
   _remoteTransport = null
   _remoteConfig = null
+  _openabTransport = null
+  _openabConfig = null
 }
 
 export function getActiveRemoteConnectionId(): number | null {
@@ -58,7 +82,11 @@ export function getActiveRemoteConnectionId(): number | null {
 }
 
 export function getTransport(): Transport {
-  return _remoteTransport ?? getShellTransport()
+  return _remoteTransport ?? _openabTransport ?? getShellTransport()
+}
+
+export function isOpenABMode(): boolean {
+  return _openabTransport !== null
 }
 
 export function isDesktop(): boolean {
@@ -81,6 +109,7 @@ export function isRemoteDesktopMode(): boolean {
 /// the local origin only as a harmless fallback.
 export function getServerBaseUrl(): string {
   if (_remoteConfig) return _remoteConfig.baseUrl.replace(/\/+$/, "")
+  if (_openabConfig) return _openabConfig.baseUrl.replace(/\/+$/, "")
   return typeof window !== "undefined" ? window.location.origin : ""
 }
 
@@ -109,6 +138,7 @@ export function __resetTransportForTests(): void {
   if (process.env.NODE_ENV !== "test") return
   _shellTransport?.destroy?.()
   _remoteTransport?.destroy?.()
+  _openabTransport?.destroy?.()
   _shellTransport = null
   _remoteTransport = null
   _remoteConfig = null
