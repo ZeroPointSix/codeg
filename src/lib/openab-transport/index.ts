@@ -259,7 +259,8 @@ export class OpenABTransport implements Transport {
             method: "POST",
             body: JSON.stringify({ text }),
           },
-          options
+          options,
+          false
         )
         return undefined as T
       }
