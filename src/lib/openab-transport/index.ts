@@ -91,6 +91,7 @@ export class OpenABTransport implements Transport {
         this.loadLiveSnapshot(sessionId, eventSeq),
       recover: async () => {
         await this.listSessions()
+        for (const listener of this.reconnectListeners) listener()
       },
       subscribe: (listener) => this.subscribeSse(listener),
     })
@@ -321,7 +322,7 @@ export class OpenABTransport implements Transport {
     }
   }
 
-  async subscribe<T>(): Promise<UnsubscribeFn> {
+  async subscribe(): Promise<UnsubscribeFn> {
     return () => {}
   }
 
@@ -599,14 +600,7 @@ export class OpenABTransport implements Transport {
       const sessionId = this.conversationIdToSession.get(value)
       if (sessionId) return sessionId
     }
-    if (typeof value === "string" && value) {
-      const numeric = Number(value)
-      if (Number.isSafeInteger(numeric)) {
-        const sessionId = this.conversationIdToSession.get(numeric)
-        if (sessionId) return sessionId
-      }
-      return value
-    }
+    if (typeof value === "string" && value) return value
     throw {
       code: "session_not_found",
       message: "session not found",
