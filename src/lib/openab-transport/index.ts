@@ -214,10 +214,7 @@ export class OpenABTransport implements Transport {
     }
   }
 
-  async subscribe<T>(
-    _event: string,
-    _handler: (payload: T) => void
-  ): Promise<UnsubscribeFn> {
+  async subscribe<T>(): Promise<UnsubscribeFn> {
     return () => {}
   }
 
