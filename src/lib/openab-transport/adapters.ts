@@ -61,14 +61,31 @@ export function toConversationSummary(
 export function latestTranscriptEntries(
   transcript: OpenABTranscriptSnapshot
 ): OpenABTranscriptEntry[] {
-  const entries = new Map<string, OpenABTranscriptEntry>()
+  const entries = new Map<
+    string,
+    { firstSequence: number; entry: OpenABTranscriptEntry }
+  >()
   for (const entry of transcript.entries) {
     const current = entries.get(entry.entry_id)
-    if (!current || entry.sequence >= current.sequence) {
-      entries.set(entry.entry_id, entry)
+    if (!current) {
+      entries.set(entry.entry_id, {
+        firstSequence: entry.sequence,
+        entry,
+      })
+      continue
+    }
+    if (entry.sequence >= current.entry.sequence) {
+      current.entry = {
+        ...current.entry,
+        ...entry,
+        tool_call: entry.tool_call ?? current.entry.tool_call,
+        tool_result: entry.tool_result ?? current.entry.tool_result,
+      }
     }
   }
-  return [...entries.values()].sort((a, b) => a.sequence - b.sequence)
+  return [...entries.values()]
+    .sort((a, b) => a.firstSequence - b.firstSequence)
+    .map((item) => item.entry)
 }
 
 function toolText(tool: OpenABToolCall | undefined): string | null {
