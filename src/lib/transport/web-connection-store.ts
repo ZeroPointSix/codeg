@@ -12,7 +12,11 @@
 //      not stack a second dialog.
 
 import { detectEnvironment } from "./detect"
-import { getShellTransport, isRemoteDesktopMode } from "./index"
+import {
+  getShellTransport,
+  isOpenABMode,
+  isRemoteDesktopMode,
+} from "./index"
 import type { WebConnState, WebTransport } from "./web-transport"
 
 // Module-level constant so `getServerSnapshot` returns a STABLE reference on
@@ -27,7 +31,13 @@ const noop = () => {}
 // transport swap from crashing the dialog plumbing.
 function webTransport(): WebTransport | null {
   if (typeof window === "undefined") return null
-  if (detectEnvironment() !== "web" || isRemoteDesktopMode()) return null
+  if (
+    detectEnvironment() !== "web" ||
+    isRemoteDesktopMode() ||
+    isOpenABMode()
+  ) {
+    return null
+  }
   const transport = getShellTransport()
   if (
     typeof (transport as Partial<WebTransport>).subscribeConnection !==
