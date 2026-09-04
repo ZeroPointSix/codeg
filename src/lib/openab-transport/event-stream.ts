@@ -13,7 +13,7 @@ interface OpenABStreamDependencies {
     sessionId: string,
     eventSeq?: number
   ): Promise<LiveSessionSnapshot>
-  recover(): Promise<void>
+  recover?(): Promise<void>
   subscribe(listener: (event: OpenABSseEvent) => void): () => void
 }
 
@@ -172,7 +172,7 @@ export class OpenABEventStream implements EventStream {
 
   private async handleEvent(event: OpenABSseEvent): Promise<void> {
     if (isRecoveryEvent(event)) {
-      await this.dependencies.recover()
+      await this.dependencies.recover?.()
       await Promise.all(
         [...this.subscriptions.values()].map((subscription) =>
           this.hydrate(subscription)
