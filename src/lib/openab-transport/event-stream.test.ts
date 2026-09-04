@@ -29,7 +29,7 @@ describe("OpenAB SSE", () => {
     ])
   })
 
-  it("rehydrates every attached session after a cursor reset", async () => {
+  it("rehydrates every attached session when global recovery fails", async () => {
     let listener: (event: OpenABSseEvent) => void = () => {}
     const loadSnapshot = vi.fn(
       async (sessionId: string, eventSeq = 7) =>
@@ -38,8 +38,12 @@ describe("OpenAB SSE", () => {
           event_seq: eventSeq,
         }) as LiveSessionSnapshot
     )
+    const recover = vi.fn(async () => {
+      throw new Error("global refresh failed")
+    })
     const stream = new OpenABEventStream({
       loadSnapshot,
+      recover,
       subscribe: (next) => {
         listener = next
         return () => {}
@@ -58,6 +62,7 @@ describe("OpenAB SSE", () => {
     listener({ id: "generation-b:1", event: "cursor_reset", data: {} })
 
     await vi.waitFor(() => expect(loadSnapshot).toHaveBeenCalledTimes(2))
+    expect(recover).toHaveBeenCalledOnce()
     expect(loadSnapshot).toHaveBeenLastCalledWith("opaque/session:1", undefined)
   })
 
