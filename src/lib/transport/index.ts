@@ -71,8 +71,6 @@ export function clearRemoteDesktopTransport(): void {
   _remoteTransport?.destroy?.()
   _remoteTransport = null
   _remoteConfig = null
-  _openabTransport = null
-  _openabConfig = null
 }
 
 export function getActiveRemoteConnectionId(): number | null {
@@ -140,4 +138,6 @@ export function __resetTransportForTests(): void {
   _shellTransport = null
   _remoteTransport = null
   _remoteConfig = null
+  _openabTransport = null
+  _openabConfig = null
 }
