@@ -474,6 +474,43 @@ describe("OpenABTransport", () => {
   })
 })
 
+describe("OpenAB last_error", () => {
+  it("maps GET session last_error into the live snapshot", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith("/transcript")) return json(transcript())
+      return json({
+        ...session(),
+        status: "error",
+        last_error: {
+          message: "agent died",
+          code: "process_exited",
+          details: "exit 1",
+        },
+      })
+    }) as unknown as typeof fetch
+    const transport = new OpenABTransport({
+      baseUrl: "https://openab.test",
+      token: "admin-token",
+      profileId: "codex-default",
+      fetchImpl,
+      storage: new MemoryStorage(),
+    })
+
+    const snap = await transport.call<LiveSessionSnapshot>(
+      "acp_get_session_snapshot",
+      { connectionId: "admin:fixture-session" }
+    )
+    expect(snap.external_id).toBe("admin:fixture-session")
+    expect(snap.last_error).toEqual({
+      message: "agent died",
+      code: "process_exited",
+      details: "exit 1",
+    })
+    transport.destroy()
+  })
+})
+
 describe("OpenAB SSE", () => {
   it("parses split frames, multiline data, and generation-qualified IDs", () => {
     const first = parseSseChunk(

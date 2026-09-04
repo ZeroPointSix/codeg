@@ -18,6 +18,14 @@ export interface OpenABSessionSnapshot {
   created_at: string
   updated_at: string
   title?: string | null
+  /** Post-accept agent/runtime error. Object or legacy string. */
+  last_error?: OpenABLastError | string | null
+}
+
+export interface OpenABLastError {
+  message: string
+  code?: string | null
+  details?: string | null
 }
 
 export interface OpenABToolCall {

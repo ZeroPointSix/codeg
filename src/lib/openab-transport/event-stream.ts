@@ -6,6 +6,7 @@ import type {
   EventStream,
   EventStreamSubscription,
 } from "@/lib/transport/types"
+import { applyOpenABSseToSnapshot, mapOpenABLastError } from "./adapters"
 import type { OpenABSseEvent } from "./types"
 
 interface OpenABStreamDependencies {
@@ -21,6 +22,26 @@ interface ActiveSubscription {
   connectionId: string
   handlers: AttachHandlers
   detached: boolean
+  lastSnapshot: LiveSessionSnapshot | null
+  hydrateInFlight: Promise<void> | null
+  queuedHydrate: boolean
+  queuedEventSeq?: number
+}
+
+export function isOpenABSessionGoneError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false
+  const value = error as { status?: unknown; code?: unknown }
+  if (value.status === 404) return true
+  return value.code === "session_not_found" || value.code === "not_found"
+}
+
+function isDestroyedTransportError(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === "object" &&
+    (error as { code?: unknown }).code === "aborted" &&
+    (error as { message?: unknown }).message === "OpenAB transport destroyed"
+  )
 }
 
 function globalSequence(id: string | null, data: unknown): number {
@@ -69,22 +90,48 @@ function lifecycleEnvelope(
 ): EventEnvelope | null {
   if (!event.data || typeof event.data !== "object") return null
   const data = event.data as {
-    snapshot?: { status?: unknown }
+    snapshot?: { status?: unknown; last_error?: unknown }
     error?: unknown
+    code?: unknown
+    details?: unknown
+    last_error?: unknown
   }
-  if (event.event === "error" && typeof data.error === "string") {
+  if (event.event === "error") {
+    const lastError =
+      mapOpenABLastError(data.last_error) ?? mapOpenABLastError(data.error)
+    const message =
+      lastError?.message ?? (typeof data.error === "string" ? data.error : null)
+    if (!message) return null
     return {
       seq,
       connection_id: connectionId,
       type: "error",
-      message: data.error,
+      message,
       agent_type: "openab",
-      code: null,
+      code:
+        lastError?.code ?? (typeof data.code === "string" ? data.code : null),
+      details:
+        lastError?.details ??
+        (typeof data.details === "string" ? data.details : null),
     }
   }
   const status = data.snapshot?.status
   if (event.event !== "status_changed" || typeof status !== "string")
     return null
+  if (status === "error" || status === "failed") {
+    const lastError = mapOpenABLastError(data.snapshot?.last_error)
+    if (lastError) {
+      return {
+        seq,
+        connection_id: connectionId,
+        type: "error",
+        message: lastError.message,
+        agent_type: "openab",
+        code: lastError.code ?? null,
+        details: lastError.details ?? null,
+      }
+    }
+  }
   if (status === "idle") {
     return {
       seq,
@@ -118,10 +165,13 @@ export class OpenABEventStream implements EventStream {
       connectionId,
       handlers,
       detached: false,
+      lastSnapshot: null,
+      hydrateInFlight: null,
+      queuedHydrate: false,
     }
     this.subscriptions.set(subscriptionId, subscription)
     this.ensureSource()
-    void this.hydrate(subscription)
+    void this.enqueueHydrate(subscription)
     return {
       subscriptionId,
       detach: () => {
@@ -151,7 +201,33 @@ export class OpenABEventStream implements EventStream {
     })
   }
 
-  private async hydrate(
+  private enqueueHydrate(
+    subscription: ActiveSubscription,
+    eventSeq?: number
+  ): Promise<void> {
+    subscription.queuedHydrate = true
+    subscription.queuedEventSeq = eventSeq
+    if (subscription.hydrateInFlight) return subscription.hydrateInFlight
+    const run = (async () => {
+      try {
+        do {
+          subscription.queuedHydrate = false
+          const seq = subscription.queuedEventSeq
+          subscription.queuedEventSeq = undefined
+          await this.hydrateOnce(subscription, seq)
+        } while (!subscription.detached && subscription.queuedHydrate)
+      } finally {
+        subscription.hydrateInFlight = null
+        if (!subscription.detached && subscription.queuedHydrate) {
+          void this.enqueueHydrate(subscription, subscription.queuedEventSeq)
+        }
+      }
+    })()
+    subscription.hydrateInFlight = run
+    return run
+  }
+
+  private async hydrateOnce(
     subscription: ActiveSubscription,
     eventSeq?: number
   ): Promise<void> {
@@ -160,14 +236,30 @@ export class OpenABEventStream implements EventStream {
         subscription.connectionId,
         eventSeq
       )
-      if (!subscription.detached) {
-        subscription.handlers.onSnapshot(snapshot, snapshot.event_seq)
-      }
-    } catch {
-      if (!subscription.detached) {
-        subscription.handlers.onDetached("connection_gone")
-      }
+      if (subscription.detached) return
+      subscription.lastSnapshot = snapshot
+      subscription.handlers.onSnapshot(snapshot, snapshot.event_seq)
+    } catch (error) {
+      if (subscription.detached || isDestroyedTransportError(error)) return
+      subscription.handlers.onDetached(
+        isOpenABSessionGoneError(error) ? "connection_gone" : "lagged"
+      )
     }
+  }
+
+  private applyIncremental(
+    subscription: ActiveSubscription,
+    event: OpenABSseEvent,
+    seq: number
+  ): boolean {
+    if (!subscription.lastSnapshot) return false
+    const next = applyOpenABSseToSnapshot(subscription.lastSnapshot, event, seq)
+    if (!next) return false
+    subscription.lastSnapshot = next
+    if (!subscription.detached) {
+      subscription.handlers.onSnapshot(next, next.event_seq)
+    }
+    return true
   }
 
   private async handleEvent(event: OpenABSseEvent): Promise<void> {
@@ -179,7 +271,7 @@ export class OpenABEventStream implements EventStream {
       }
       await Promise.all(
         [...this.subscriptions.values()].map((subscription) =>
-          this.hydrate(subscription)
+          this.enqueueHydrate(subscription)
         )
       )
       return
@@ -191,16 +283,21 @@ export class OpenABEventStream implements EventStream {
     const matching = [...this.subscriptions.values()].filter(
       (subscription) => subscription.connectionId === sessionId
     )
-    await Promise.all(
-      matching.map(async (subscription) => {
-        const envelope = lifecycleEnvelope(event, sessionId, seq)
-        const snapshotSeq = envelope ? Math.max(0, seq - 1) : seq
-        await this.hydrate(subscription, snapshotSeq)
+    for (const subscription of matching) {
+      const envelope = lifecycleEnvelope(event, sessionId, seq)
+      if (this.applyIncremental(subscription, event, seq)) {
+        if (!subscription.detached && envelope) {
+          subscription.handlers.onEvent(envelope)
+        }
+        continue
+      }
+      const snapshotSeq = envelope ? Math.max(0, seq - 1) : seq
+      void this.enqueueHydrate(subscription, snapshotSeq).then(() => {
         if (!subscription.detached && envelope) {
           subscription.handlers.onEvent(envelope)
         }
       })
-    )
+    }
   }
 }
 

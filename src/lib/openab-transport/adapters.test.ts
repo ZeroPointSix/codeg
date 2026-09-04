@@ -1,9 +1,11 @@
 import {
+  applyOpenABSseToSnapshot,
   latestTranscriptEntries,
   toConversationSummary,
   toLiveSessionSnapshot,
   transcriptToTurns,
 } from "./adapters"
+import { denormalizeSnapshot } from "@/lib/snapshot-denormalize"
 import type { OpenABSessionSnapshot, OpenABTranscriptSnapshot } from "./types"
 
 const session: OpenABSessionSnapshot = {
@@ -105,5 +107,74 @@ describe("OpenAB adapters", () => {
     expect(live.conversation_id).toBe(42)
     expect(live.live_message?.content).toEqual([{ kind: "text", text: "new" }])
     expect(live.event_seq).toBe(11)
+  })
+
+  it("maps last_error from the OpenAB session snapshot", () => {
+    const live = toLiveSessionSnapshot(
+      {
+        ...session,
+        status: "error",
+        last_error: {
+          message: "quota exceeded",
+          code: "resource_exhausted",
+          details: "retry after 60s",
+        },
+      },
+      transcript(),
+      42
+    )
+    expect(live.external_id).toBe(session.session_id)
+    expect(live.connection_id).toBe(session.session_id)
+    expect(live.last_error).toEqual({
+      message: "quota exceeded",
+      code: "resource_exhausted",
+      details: "retry after 60s",
+    })
+  })
+
+  it("upserts a transcript SSE entry onto the live snapshot without REST", () => {
+    const live = toLiveSessionSnapshot(session, transcript(), 42)
+    const next = applyOpenABSseToSnapshot(
+      live,
+      {
+        id: "generation-a:20",
+        event: "transcript",
+        data: {
+          session_id: session.session_id,
+          sequence: 20,
+          entry: {
+            entry_id: "assistant-1",
+            sequence: 20,
+            role: "assistant",
+            content: "newer",
+            status: "streaming",
+          },
+        },
+      },
+      20
+    )
+    expect(next?.live_message?.content).toEqual([
+      { kind: "text", text: "newer" },
+    ])
+    expect(next?.event_seq).toBe(20)
+  })
+
+  it("feeds OpenAB last_error into the workbench snapshot patch", () => {
+    const live = toLiveSessionSnapshot(
+      {
+        ...session,
+        status: "error",
+        last_error: {
+          message: "quota exceeded",
+          code: "resource_exhausted",
+          details: "retry after 60s",
+        },
+      },
+      transcript(),
+      42
+    )
+    const patch = denormalizeSnapshot(live)
+    expect(patch.lastError).toBe("quota exceeded")
+    expect(patch.lastErrorDetails).toBe("retry after 60s")
   })
 })
