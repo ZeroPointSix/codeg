@@ -90,8 +90,11 @@ export class OpenABTransport implements Transport {
       loadSnapshot: (sessionId, eventSeq) =>
         this.loadLiveSnapshot(sessionId, eventSeq),
       recover: async () => {
-        await this.listSessions()
-        for (const listener of this.reconnectListeners) listener()
+        try {
+          await this.listSessions()
+        } finally {
+          this.notifyReconnect()
+        }
       },
       subscribe: (listener) => this.subscribeSse(listener),
     })
@@ -322,7 +325,12 @@ export class OpenABTransport implements Transport {
     }
   }
 
-  async subscribe(): Promise<UnsubscribeFn> {
+  async subscribe<T>(
+    event: string,
+    handler: (payload: T) => void
+  ): Promise<UnsubscribeFn> {
+    void event
+    void handler
     return () => {}
   }
 
@@ -333,6 +341,17 @@ export class OpenABTransport implements Transport {
   onReconnect(callback: () => void): UnsubscribeFn {
     this.reconnectListeners.add(callback)
     return () => this.reconnectListeners.delete(callback)
+  }
+
+  private notifyReconnect(): void {
+    for (const listener of this.reconnectListeners) {
+      try {
+        listener()
+      } catch {
+        // One consumer failing to refresh must not block SSE recovery or
+        // other global listeners such as the sidebar conversation list.
+      }
+    }
   }
 
   waitForReady(): Promise<void> {
@@ -779,7 +798,7 @@ export class OpenABTransport implements Transport {
         }
       }
       if (this.destroyed || this.sseListeners.size === 0) return
-      for (const listener of this.reconnectListeners) listener()
+      this.notifyReconnect()
       await new Promise((resolve) => setTimeout(resolve, backoff))
       backoff = Math.min(backoff * 2, RECONNECT_MAX_MS)
     }

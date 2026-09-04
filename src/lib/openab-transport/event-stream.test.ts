@@ -66,6 +66,48 @@ describe("OpenAB SSE", () => {
     expect(loadSnapshot).toHaveBeenLastCalledWith("opaque/session:1", undefined)
   })
 
+  it("recovers from lagged-stream errors the same way as cursor reset", async () => {
+    let listener: (event: OpenABSseEvent) => void = () => {}
+    const loadSnapshot = vi.fn(
+      async (sessionId: string) =>
+        ({
+          connection_id: sessionId,
+          event_seq: 9,
+        }) as LiveSessionSnapshot
+    )
+    const recover = vi.fn(async () => {
+      throw new Error("list failed")
+    })
+    const stream = new OpenABEventStream({
+      loadSnapshot,
+      recover,
+      subscribe: (next) => {
+        listener = next
+        return () => {}
+      },
+    })
+    const handlers = {
+      onSnapshot: vi.fn(),
+      onReplay: vi.fn(),
+      onEvent: vi.fn(),
+      onDetached: vi.fn(),
+    }
+
+    stream.attach("opaque/session:1", {}, handlers)
+    await vi.waitFor(() => expect(loadSnapshot).toHaveBeenCalledTimes(1))
+
+    listener({
+      id: "generation-c:8",
+      event: "error",
+      data: { error: "event stream lagged" },
+    })
+
+    await vi.waitFor(() => expect(loadSnapshot).toHaveBeenCalledTimes(2))
+    expect(recover).toHaveBeenCalledOnce()
+    expect(handlers.onDetached).not.toHaveBeenCalled()
+    stream.destroy()
+  })
+
   it("hydrates through the event sequence before emitting lifecycle events", async () => {
     let listener: (event: OpenABSseEvent) => void = () => {}
     const loadSnapshot = vi.fn(

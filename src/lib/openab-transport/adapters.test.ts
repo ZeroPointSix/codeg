@@ -4,10 +4,7 @@ import {
   toLiveSessionSnapshot,
   transcriptToTurns,
 } from "./adapters"
-import type {
-  OpenABSessionSnapshot,
-  OpenABTranscriptSnapshot,
-} from "./types"
+import type { OpenABSessionSnapshot, OpenABTranscriptSnapshot } from "./types"
 
 const session: OpenABSessionSnapshot = {
   session_id: "slack:team/thread:001",

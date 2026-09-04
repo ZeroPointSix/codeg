@@ -219,6 +219,115 @@ describe("OpenABTransport", () => {
     expect(onUnauthorized).toHaveBeenCalledOnce()
     transport.destroy()
   })
+
+  it("does not resolve opaque numeric session IDs through local proxy IDs", async () => {
+    const calls: string[] = []
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      calls.push(url)
+      if (url.endsWith("/api/v1/sessions")) {
+        return json([session("admin:other"), session("1")])
+      }
+      if (url.endsWith("/transcript")) {
+        const encoded = url.split("/sessions/")[1]?.split("/")[0] ?? ""
+        return json(transcript(decodeURIComponent(encoded)))
+      }
+      const encoded = url.split("/sessions/")[1] ?? ""
+      return json(session(decodeURIComponent(encoded)))
+    }) as unknown as typeof fetch
+    const transport = new OpenABTransport({
+      baseUrl: "https://openab.test",
+      token: "admin-token",
+      profileId: "codex-default",
+      fetchImpl,
+      storage: new MemoryStorage(),
+    })
+
+    const listed = await transport.call<DbConversationSummary[]>(
+      "list_all_conversations"
+    )
+    const other = listed.find((item) => item.external_id === "admin:other")
+    const opaque = listed.find((item) => item.external_id === "1")
+    expect(other?.id).toBe(1)
+    expect(opaque?.id).toBe(2)
+
+    await transport.call("get_folder_conversation", { conversationId: 1 })
+    await transport.call("get_folder_conversation", { conversationId: "1" })
+    await transport.call("get_folder_conversation", { conversationId: 2 })
+
+    expect(calls).toContain(
+      "https://openab.test/api/v1/sessions/admin%3Aother/transcript"
+    )
+    expect(
+      calls.filter(
+        (url) => url === "https://openab.test/api/v1/sessions/1/transcript"
+      )
+    ).toHaveLength(2)
+    transport.destroy()
+  })
+
+  it("notifies reconnect listeners after SSE recovery even if listing fails", async () => {
+    const encoder = new TextEncoder()
+    let push: ((chunk: string) => void) | undefined
+    const eventsBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        push = (chunk) => controller.enqueue(encoder.encode(chunk))
+      },
+    })
+    let failList = false
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith("/events")) {
+        return new Response(eventsBody, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        })
+      }
+      if (url.endsWith("/api/v1/sessions")) {
+        if (failList) {
+          return json({ error: "unavailable" }, 500)
+        }
+        return json([session()])
+      }
+      if (url.endsWith("/transcript")) return json(transcript())
+      return json(session())
+    })
+    const transport = new OpenABTransport({
+      baseUrl: "https://openab.test",
+      token: "admin-token",
+      profileId: "codex-default",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      storage: new MemoryStorage(),
+    })
+    const onReconnect = vi.fn()
+    transport.onReconnect(onReconnect)
+    const onSnapshot = vi.fn()
+    const subscription = transport.eventStream().attach(
+      "admin:fixture-session",
+      { sinceSeq: 0 },
+      {
+        onSnapshot,
+        onReplay: vi.fn(),
+        onEvent: vi.fn(),
+        onDetached: vi.fn(),
+      }
+    )
+
+    await vi.waitFor(() => expect(onSnapshot).toHaveBeenCalledOnce())
+    await vi.waitFor(() =>
+      expect(
+        fetchImpl.mock.calls.some(([url]) => String(url).endsWith("/events"))
+      ).toBe(true)
+    )
+    failList = true
+    push?.('id: gen:1\nevent: cursor_reset\ndata: {"sequence":1}\n\n')
+
+    await vi.waitFor(() => expect(onReconnect).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(onSnapshot).toHaveBeenCalledTimes(2))
+
+    subscription.detach()
+    transport.destroy()
+  })
 })
 
 describe("OpenAB SSE", () => {
