@@ -260,6 +260,29 @@ describe("OpenABTransport", () => {
     otherProfile.destroy()
   })
 
+  it("rejects in-flight REST after destroy even when fetch ignores abort", async () => {
+    let release!: (value: Response) => void
+    const hung = new Promise<Response>((resolve) => {
+      release = resolve
+    })
+    const transport = new OpenABTransport({
+      baseUrl: "https://alpha.test",
+      token: "alpha-token",
+      profileId: "codex-default",
+      fetchImpl: vi.fn(async () => hung) as unknown as typeof fetch,
+      storage: new MemoryStorage(),
+    })
+
+    const pending = transport.call("list_all_conversations")
+    transport.destroy()
+    release(json([session("1")]))
+
+    await expect(pending).rejects.toMatchObject({
+      code: "aborted",
+      message: "OpenAB transport destroyed",
+    })
+  })
+
   it("uses only the seven REST paths with Bearer auth and encoded session IDs", async () => {
     const calls: Array<{ url: string; init: RequestInit }> = []
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init = {}) => {

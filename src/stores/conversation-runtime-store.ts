@@ -5,7 +5,11 @@ import type {
   ToolCallInfo,
 } from "@/contexts/acp-connections-context"
 import { getFolderConversation, getFolderConversationTurns } from "@/lib/api"
-import { registerBackendScopedStoreReset } from "@/stores/backend-scoped-store-reset"
+import {
+  getBackendScopeEpoch,
+  isCurrentBackendScopeEpoch,
+  registerBackendScopedStoreReset,
+} from "@/stores/backend-scoped-store-reset"
 import type {
   AgentExecutionStats,
   AgentTranscriptEntry,
@@ -2733,6 +2737,17 @@ function isLatestGeneration(
   return fetchGeneration.get(conversationId) === generation
 }
 
+function canCommitFetch(
+  conversationId: number,
+  generation: number,
+  epoch: number
+): boolean {
+  return (
+    isCurrentBackendScopeEpoch(epoch) &&
+    isLatestGeneration(conversationId, generation)
+  )
+}
+
 // ─── Cross-client viewer detail sync ─────────────────────────────────────
 // A conversation whose turn completes on ANOTHER client (this client is only
 // VIEWING it) has no live promotion path here: the panel's promotion is edge-
@@ -3338,15 +3353,16 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
       return
     }
 
+    const epoch = getBackendScopeEpoch()
     const generation = bumpFetchGeneration(conversationId)
     dispatch({ type: "FETCH_DETAIL_START", conversationId })
     getFolderConversation(conversationId, { tailTurns: TAIL_TURNS_DEFAULT })
       .then((detail) => {
-        if (!isLatestGeneration(conversationId, generation)) return
+        if (!canCommitFetch(conversationId, generation, epoch)) return
         dispatch({ type: "FETCH_DETAIL_SUCCESS", conversationId, detail })
       })
       .catch((error: unknown) => {
-        if (!isLatestGeneration(conversationId, generation)) return
+        if (!canCommitFetch(conversationId, generation, epoch)) return
         dispatch({
           type: "FETCH_DETAIL_ERROR",
           conversationId,
@@ -3369,11 +3385,12 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
     // never flip to their persisted terminal state.
     const session = get().byConversationId.get(conversationId)
     const fetchId = session?.dbConversationId ?? conversationId
+    const epoch = getBackendScopeEpoch()
     const generation = bumpFetchGeneration(conversationId)
     dispatch({ type: "FETCH_DETAIL_START", conversationId })
     fetchDetailWindowed(fetchId, session?.detail ?? null)
       .then((detail) => {
-        if (!isLatestGeneration(conversationId, generation)) return
+        if (!canCommitFetch(conversationId, generation, epoch)) return
         dispatch({
           type: "FETCH_DETAIL_SUCCESS",
           conversationId,
@@ -3383,7 +3400,7 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
         })
       })
       .catch((error: unknown) => {
-        if (!isLatestGeneration(conversationId, generation)) return
+        if (!canCommitFetch(conversationId, generation, epoch)) return
         dispatch({
           type: "FETCH_DETAIL_ERROR",
           conversationId,
@@ -3408,10 +3425,12 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
     if (beforeIndex <= 0 || session.loadingOlderTurns) return
     const expectedSeamHash = detail.prefix_hash
     const fetchId = session.dbConversationId ?? conversationId
+    const epoch = getBackendScopeEpoch()
     const generation = bumpFetchGeneration(conversationId)
     dispatch({ type: "LOAD_OLDER_TURNS_START", conversationId })
     getFolderConversationTurns(fetchId, beforeIndex, OLDER_TURNS_PAGE_SIZE)
       .then((page) => {
+        if (!isCurrentBackendScopeEpoch(epoch)) return
         if (!isLatestGeneration(conversationId, generation)) {
           dispatch({ type: "LOAD_OLDER_TURNS_DONE", conversationId })
           return
@@ -3436,6 +3455,7 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
         // Transient (old server: the endpoint 501s — unreachable in practice
         // because a legacy detail never reports turns_offset > 0). Clear the
         // flag; the top sentinel retriggers on the next scroll.
+        if (!isCurrentBackendScopeEpoch(epoch)) return
         dispatch({ type: "LOAD_OLDER_TURNS_DONE", conversationId })
       })
   }
@@ -3472,6 +3492,7 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
       }
     }
     viewerDetailSyncCancels.set(conversationId, cancel)
+    const epoch = getBackendScopeEpoch()
 
     const attempt = (n: number): void => {
       if (cancelled) return
@@ -3495,7 +3516,10 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
       const generation = bumpFetchGeneration(conversationId)
       fetchDetailWindowed(fetchId, cur.detail)
         .then((detail) => {
-          if (cancelled) return
+          if (cancelled || !isCurrentBackendScopeEpoch(epoch)) {
+            cancel()
+            return
+          }
           const cur2 = get().byConversationId.get(conversationId)
           if (!cur2 || !isPureViewerSession(cur2)) {
             cancel()
@@ -3563,7 +3587,10 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
           // A failed read is transient (the transcript may be mid-write); retry
           // on the same schedule, then give up. Never surfaces a detailError —
           // the viewer keeps its current content.
-          if (cancelled) return
+          if (cancelled || !isCurrentBackendScopeEpoch(epoch)) {
+            cancel()
+            return
+          }
           if (n + 1 < VIEWER_DETAIL_SYNC_DELAYS_MS.length) {
             timer = setTimeout(
               () => attempt(n + 1),
@@ -3585,11 +3612,12 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
     const runtimeId = runtimeConversationId ?? dbConversationId
     let cancelled = false
     let timerId: ReturnType<typeof setTimeout> | null = null
+    const epoch = getBackendScopeEpoch()
 
     const trySync = (attempt: number) => {
       const delay = attempt === 0 ? 1500 : 3000
       timerId = setTimeout(() => {
-        if (cancelled) return
+        if (cancelled || !isCurrentBackendScopeEpoch(epoch)) return
         const session = get().byConversationId.get(runtimeId)
         if (!session || session.localTurns.length === 0) return
         if (session.syncState === "awaiting_persist") return
@@ -3605,7 +3633,7 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
           boundaryIndex != null ? { fromIndex: boundaryIndex } : undefined
         )
           .then((parsed) => {
-            if (cancelled) return
+            if (cancelled || !isCurrentBackendScopeEpoch(epoch)) return
             const cur = get().byConversationId.get(runtimeId)
             if (!cur || cur.localTurns.length === 0) return
             if (cur.syncState === "awaiting_persist") return
@@ -3873,11 +3901,9 @@ export function useConversationRuntimeActions(): RuntimeActions {
  * lifetime and is never reset.
  */
 export function resetConversationRuntimeStore(): void {
-  // NOTE: clearing (vs. epoch-bumping) means a pre-reset in-flight fetch could
-  // re-match a post-reset generation and commit stale detail. Harmless today —
-  // the only production caller (the backend-identity guard) never fires and tests
-  // have no concurrent fetches — but a real in-place backend switch would need a
-  // backend epoch here. See `RemoteConnectionGate`.
+  // Clears generation counters. In-flight fetches also capture
+  // `getBackendScopeEpoch()` so a post-reset bump back to generation 1 on the
+  // new target cannot rematch a pre-reset request (OpenAB target switch).
   fetchGeneration.clear()
   for (const cancel of viewerDetailSyncCancels.values()) cancel()
   viewerDetailSyncCancels.clear()

@@ -75,6 +75,7 @@ export class OpenABTransport implements Transport {
   private sseTask: Promise<void> | null = null
   private lastEventId: string | null = null
   private destroyed = false
+  private readonly lifetime = new AbortController()
   private pendingSessionIds: string[] = []
   private nextConversationId = 1
 
@@ -378,6 +379,7 @@ export class OpenABTransport implements Transport {
 
   destroy(): void {
     this.destroyed = true
+    this.lifetime.abort()
     this.sseController?.abort()
     this.sseController = null
     this.sseListeners.clear()
@@ -391,37 +393,67 @@ export class OpenABTransport implements Transport {
     options?: CallOptions,
     parseJson = true
   ): Promise<T> {
+    if (this.destroyed || this.lifetime.signal.aborted) {
+      throw destroyedError()
+    }
     const controller = new AbortController()
     const timeout = setTimeout(
       () => controller.abort(),
       options?.timeoutMs ?? REQUEST_TIMEOUT_MS
     )
+    const abortFromDestroy = () => controller.abort()
+    this.lifetime.signal.addEventListener("abort", abortFromDestroy)
     let response: Response
     try {
-      response = await this.fetchImpl(`${this.config.baseUrl}${path}`, {
-        ...init,
-        headers: {
-          Accept: "application/json",
-          ...(init.body ? { "Content-Type": "application/json" } : {}),
-          Authorization: `Bearer ${this.config.token}`,
-          ...init.headers,
-        },
-        signal: controller.signal,
-      })
+      try {
+        response = await this.fetchImpl(`${this.config.baseUrl}${path}`, {
+          ...init,
+          headers: {
+            Accept: "application/json",
+            ...(init.body ? { "Content-Type": "application/json" } : {}),
+            Authorization: `Bearer ${this.config.token}`,
+            ...init.headers,
+          },
+          signal: controller.signal,
+        })
+      } catch (error) {
+        if (this.destroyed || this.lifetime.signal.aborted) {
+          throw destroyedError()
+        }
+        throw error
+      }
+      if (this.destroyed || this.lifetime.signal.aborted) {
+        throw destroyedError()
+      }
+      if (response.status === 401) this.config.onUnauthorized?.()
+      if (!response.ok) {
+        const body = (await response
+          .json()
+          .catch(() => ({}))) as OpenABErrorBody
+        if (this.destroyed || this.lifetime.signal.aborted) {
+          throw destroyedError()
+        }
+        throw {
+          code: response.status === 409 ? "turn_in_progress" : body.code,
+          message: body.error ?? `HTTP ${response.status}`,
+          status: response.status,
+        }
+      }
+      if (!parseJson || response.status === 204) {
+        if (this.destroyed || this.lifetime.signal.aborted) {
+          throw destroyedError()
+        }
+        return undefined as T
+      }
+      const body = (await response.json()) as T
+      if (this.destroyed || this.lifetime.signal.aborted) {
+        throw destroyedError()
+      }
+      return body
     } finally {
       clearTimeout(timeout)
+      this.lifetime.signal.removeEventListener("abort", abortFromDestroy)
     }
-    if (response.status === 401) this.config.onUnauthorized?.()
-    if (!response.ok) {
-      const body = (await response.json().catch(() => ({}))) as OpenABErrorBody
-      throw {
-        code: response.status === 409 ? "turn_in_progress" : body.code,
-        message: body.error ?? `HTTP ${response.status}`,
-        status: response.status,
-      }
-    }
-    if (!parseJson || response.status === 204) return undefined as T
-    return response.json() as Promise<T>
   }
 
   private async listSessions(
@@ -816,5 +848,13 @@ export class OpenABTransport implements Transport {
       await new Promise((resolve) => setTimeout(resolve, backoff))
       backoff = Math.min(backoff * 2, RECONNECT_MAX_MS)
     }
+  }
+}
+
+function destroyedError() {
+  return {
+    code: "aborted",
+    message: "OpenAB transport destroyed",
+    status: 0,
   }
 }

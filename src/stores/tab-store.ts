@@ -1,7 +1,11 @@
 import { create } from "zustand"
 import { useShallow } from "zustand/react/shallow"
 import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
-import { registerBackendScopedStoreReset } from "@/stores/backend-scoped-store-reset"
+import {
+  getBackendScopeEpoch,
+  isCurrentBackendScopeEpoch,
+  registerBackendScopedStoreReset,
+} from "@/stores/backend-scoped-store-reset"
 import {
   getFolderConversation,
   listOpenedTabs,
@@ -1982,10 +1986,11 @@ export const useTabStore = create<TabStoreState>()((set, get) => ({
   hydrate: () => {
     let cancelled = false
     void (async () => {
+      const epoch = getBackendScopeEpoch()
       let snapshotLoaded = false
       try {
         const snap = await listOpenedTabs()
-        if (cancelled) return
+        if (cancelled || !isCurrentBackendScopeEpoch(epoch)) return
         snapshotLoaded = true
         tabsSnapshotLoaded = true
         version = snap.version
@@ -2050,7 +2055,7 @@ export const useTabStore = create<TabStoreState>()((set, get) => ({
         )
       } catch (err) {
         console.error("[TabStore] listOpenedTabs failed:", err)
-        if (!cancelled) {
+        if (!cancelled && isCurrentBackendScopeEpoch(epoch)) {
           // The snapshot is the CONVERSATION half only; the drafts are
           // device-local and still valid, so restore them rather than starting
           // blank. Everything that could destroy on-disk state — the invariant
@@ -2080,7 +2085,7 @@ export const useTabStore = create<TabStoreState>()((set, get) => ({
           )
         }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && isCurrentBackendScopeEpoch(epoch)) {
           set({ tabsHydrated: true })
           // First full invariant pass: with hydration done, blob-seeded group
           // entries that matched nothing (tabs closed on another client) prune
@@ -2331,8 +2336,10 @@ export const useTabStore = create<TabStoreState>()((set, get) => ({
   },
 
   refetchTabs: async () => {
+    const epoch = getBackendScopeEpoch()
     try {
       const snap = await listOpenedTabs()
+      if (!isCurrentBackendScopeEpoch(epoch)) return
       const change: TabsChanged = {
         version: snap.version,
         origin: "server",
@@ -2657,10 +2664,10 @@ export function useTabActions() {
 
 /**
  * Restore pristine state (store + module coordination vars + injected runtime).
- * Used by tests, and by the backend-scoped reset registry if a realm's backend
- * identity ever changes (an invariant-violating transition that does not occur
- * today — see `RemoteConnectionGate`). In normal operation the store lives for
- * the window's lifetime and is never reset.
+ * Used by tests, and by the backend-scoped reset registry when the realm's
+ * backend identity changes (OpenAB target switch). In-flight `hydrate` /
+ * `refetchTabs` capture the scope epoch and refuse to restore tabs or set
+ * `tabsHydrated` after the reset.
  */
 export function resetTabStore() {
   if (saveTimer) {

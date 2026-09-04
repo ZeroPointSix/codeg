@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { resetBackendScopedStores } from "./backend-scoped-store-reset"
 import {
   resetAppWorkspaceStore,
   useAppWorkspaceStore,
@@ -23,11 +24,17 @@ vi.mock("@/lib/api", () => ({
   setFolderGroup: vi.fn(),
 }))
 
-const { getFolder, getGitHead, listAllFolderDetails, listOpenFolderDetails } =
-  await import("@/lib/api")
+const {
+  getFolder,
+  getGitHead,
+  listAllFolderDetails,
+  listAllConversations,
+  listOpenFolderDetails,
+} = await import("@/lib/api")
 const mockGetFolder = vi.mocked(getFolder)
 const mockGetGitHead = vi.mocked(getGitHead)
 const mockListAllFolders = vi.mocked(listAllFolderDetails)
+const mockListAllConversations = vi.mocked(listAllConversations)
 const mockListOpenFolders = vi.mocked(listOpenFolderDetails)
 
 function makeSummary(
@@ -789,5 +796,51 @@ describe("ensureGitHead — HEAD for a folder the poll doesn't cover", () => {
     expect(useAppWorkspaceStore.getState().gitHeads.get(9)?.branch).toBe(
       "task/new"
     )
+  })
+})
+
+describe("backend-scope reset vs in-flight fetches", () => {
+  it("does not restore conversations after a hung list finishes post-reset", async () => {
+    let resolveList!: (value: DbConversationSummary[]) => void
+    mockListAllConversations.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveList = resolve
+      })
+    )
+
+    const pending = useAppWorkspaceStore.getState().refreshConversations()
+    resetBackendScopedStores()
+    expect(useAppWorkspaceStore.getState().conversations).toEqual([])
+    expect(useAppWorkspaceStore.getState().conversationsLoading).toBe(true)
+
+    resolveList([makeSummary({ id: 1, title: "Alpha session" })])
+    await pending
+
+    const after = useAppWorkspaceStore.getState()
+    expect(after.conversations).toEqual([])
+    expect(after.conversationsError).toBeNull()
+    expect(after.conversationsLoading).toBe(true)
+  })
+
+  it("does not hydrate folders from a fetch that finishes after the reset", async () => {
+    let resolveOpen!: (value: FolderDetail[]) => void
+    mockListOpenFolders.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveOpen = resolve
+      })
+    )
+    mockListAllFolders.mockResolvedValueOnce([])
+
+    const pending = useAppWorkspaceStore.getState().fetchFolders()
+    resetBackendScopedStores()
+    expect(useAppWorkspaceStore.getState().foldersHydrated).toBe(false)
+
+    resolveOpen([makeFolder({ id: 1, name: "Alpha folder" })])
+    await pending
+
+    const after = useAppWorkspaceStore.getState()
+    expect(after.folders).toEqual([])
+    expect(after.foldersHydrated).toBe(false)
+    expect(after.foldersLoading).toBe(true)
   })
 })
