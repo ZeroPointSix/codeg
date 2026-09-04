@@ -28,6 +28,10 @@ import {
   transcriptToTurns,
 } from "./adapters"
 import { OpenABEventStream, parseSseChunk } from "./event-stream"
+import {
+  openABIdentityStorageKey,
+  openABOpenedTabsStorageKey,
+} from "./storage-keys"
 import type {
   OpenABErrorBody,
   OpenABSseEvent,
@@ -40,7 +44,6 @@ const REQUEST_TIMEOUT_MS = 60_000
 const RECONNECT_INITIAL_MS = 1_000
 const RECONNECT_MAX_MS = 30_000
 const OPENAB_AGENT_TYPE = "openab"
-const OPENAB_IDENTITY_KEY = "openab_conversation_identities_v1"
 
 const EMPTY_LIST_COMMANDS = new Set([
   "automation_list",
@@ -66,6 +69,8 @@ export class OpenABTransport implements Transport {
   private readonly reconnectListeners = new Set<() => void>()
   private readonly sessionToConversationId = new Map<string, number>()
   private readonly conversationIdToSession = new Map<number, string>()
+  private readonly identityKey: string
+  private readonly openedTabsKey: string
   private sseController: AbortController | null = null
   private sseTask: Promise<void> | null = null
   private lastEventId: string | null = null
@@ -77,6 +82,7 @@ export class OpenABTransport implements Transport {
     this.config = {
       ...config,
       baseUrl: config.baseUrl.replace(/\/+$/, ""),
+      profileId: config.profileId.trim(),
     }
     this.fetchImpl = config.fetchImpl ?? globalThis.fetch.bind(globalThis)
     this.storage =
@@ -85,6 +91,14 @@ export class OpenABTransport implements Transport {
           ? null
           : localStorage
         : config.storage
+    this.identityKey = openABIdentityStorageKey(
+      this.config.baseUrl,
+      this.config.profileId
+    )
+    this.openedTabsKey = openABOpenedTabsStorageKey(
+      this.config.baseUrl,
+      this.config.profileId
+    )
     this.restoreIdentities()
     this.stream = new OpenABEventStream({
       loadSnapshot: (sessionId, eventSeq) =>
@@ -630,7 +644,7 @@ export class OpenABTransport implements Transport {
   private restoreIdentities(): void {
     if (!this.storage) return
     try {
-      const raw = this.storage.getItem(OPENAB_IDENTITY_KEY)
+      const raw = this.storage.getItem(this.identityKey)
       if (!raw) return
       const state = JSON.parse(raw) as Partial<PersistedIdentityState>
       this.nextConversationId = Math.max(1, Number(state.nextId) || 1)
@@ -662,14 +676,14 @@ export class OpenABTransport implements Transport {
         ([sessionId, conversationId]) => ({ sessionId, conversationId })
       ),
     }
-    this.storage.setItem(OPENAB_IDENTITY_KEY, JSON.stringify(state))
+    this.storage.setItem(this.identityKey, JSON.stringify(state))
   }
 
   private readOpenedTabs(): OpenedTabsSnapshot {
     if (!this.storage) return { version: 0, items: [] }
     try {
       const parsed = JSON.parse(
-        this.storage.getItem("openab_opened_tabs") ?? '{"version":0,"items":[]}'
+        this.storage.getItem(this.openedTabsKey) ?? '{"version":0,"items":[]}'
       ) as Partial<OpenedTabsSnapshot>
       return {
         version: Number(parsed.version) || 0,
@@ -692,7 +706,7 @@ export class OpenABTransport implements Transport {
     const items = Array.isArray(args.items) ? (args.items as OpenedTab[]) : []
     const version = current.version + 1
     this.storage?.setItem(
-      "openab_opened_tabs",
+      this.openedTabsKey,
       JSON.stringify({ version, items })
     )
     return { accepted: true, version, tabs: items }

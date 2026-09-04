@@ -139,6 +139,127 @@ describe("OpenABTransport", () => {
     second.destroy()
   })
 
+  it("isolates mappings and opened tabs per OpenAB target when session_id is 1", async () => {
+    const storage = new MemoryStorage()
+    storage.setItem(
+      "openab_conversation_identities_v1",
+      JSON.stringify({
+        nextId: 99,
+        entries: [{ sessionId: "1", conversationId: 98 }],
+      })
+    )
+    storage.setItem(
+      "openab_opened_tabs",
+      JSON.stringify({
+        version: 7,
+        items: [
+          {
+            id: 1,
+            folder_id: 1,
+            conversation_id: 98,
+            agent_type: "openab",
+            position: 0,
+            is_active: true,
+            is_pinned: false,
+          },
+        ],
+      })
+    )
+    const fetchFor = () =>
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.endsWith("/api/v1/sessions")) return json([session("1")])
+        if (url.endsWith("/transcript")) return json(transcript("1"))
+        return json(session("1"))
+      }) as unknown as typeof fetch
+
+    const alpha = new OpenABTransport({
+      baseUrl: "https://alpha.test/",
+      token: "alpha-token",
+      profileId: "codex-default",
+      fetchImpl: fetchFor(),
+      storage,
+    })
+    const alphaList = await alpha.call<DbConversationSummary[]>(
+      "list_all_conversations"
+    )
+    expect(alphaList[0]?.id).toBe(1)
+    expect(alphaList[0]?.external_id).toBe("1")
+    const saved = await alpha.call<{ accepted: boolean }>("save_opened_tabs", {
+      expectedVersion: 0,
+      items: [
+        {
+          id: 1,
+          folder_id: 954_000_000,
+          conversation_id: 1,
+          agent_type: "openab",
+          position: 0,
+          is_active: true,
+          is_pinned: false,
+        },
+      ],
+    })
+    expect(saved.accepted).toBe(true)
+    alpha.destroy()
+
+    const beta = new OpenABTransport({
+      baseUrl: "https://beta.test",
+      token: "beta-token",
+      profileId: "codex-default",
+      fetchImpl: fetchFor(),
+      storage,
+    })
+    const betaList = await beta.call<DbConversationSummary[]>(
+      "list_all_conversations"
+    )
+    expect(betaList[0]?.external_id).toBe("1")
+    const betaTabs = await beta.call<{
+      items: Array<{ conversation_id: number | null }>
+      version: number
+    }>("list_opened_tabs")
+    expect(betaTabs.version).toBe(0)
+    expect(betaTabs.items).toEqual([])
+    const betaDetail = await beta.call<DbConversationDetail>(
+      "get_folder_conversation",
+      { conversationId: 1 }
+    )
+    expect(betaDetail.summary.external_id).toBe("1")
+    beta.destroy()
+
+    const alphaAgain = new OpenABTransport({
+      baseUrl: "https://alpha.test",
+      token: "alpha-token",
+      profileId: "codex-default",
+      fetchImpl: fetchFor(),
+      storage,
+    })
+    const restoredAlpha = await alphaAgain.call<DbConversationSummary[]>(
+      "list_all_conversations"
+    )
+    expect(restoredAlpha[0]?.id).toBe(1)
+    const alphaTabs = await alphaAgain.call<{
+      items: Array<{ conversation_id: number | null }>
+      version: number
+    }>("list_opened_tabs")
+    expect(alphaTabs.version).toBe(1)
+    expect(alphaTabs.items[0]?.conversation_id).toBe(1)
+    alphaAgain.destroy()
+
+    const otherProfile = new OpenABTransport({
+      baseUrl: "https://alpha.test",
+      token: "alpha-token",
+      profileId: "claude-default",
+      fetchImpl: fetchFor(),
+      storage,
+    })
+    const otherTabs = await otherProfile.call<{
+      items: unknown[]
+      version: number
+    }>("list_opened_tabs")
+    expect(otherTabs.items).toEqual([])
+    otherProfile.destroy()
+  })
+
   it("uses only the seven REST paths with Bearer auth and encoded session IDs", async () => {
     const calls: Array<{ url: string; init: RequestInit }> = []
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init = {}) => {

@@ -1,6 +1,9 @@
 import { detectEnvironment } from "./detect"
 import type { RemoteTransportConfig, Transport } from "./types"
 import type { OpenABTransportConfig } from "../openab-transport/types"
+import { OpenABTransport } from "../openab-transport/index"
+import { openABConnectionScope } from "../openab-transport/storage-keys"
+import { resetBackendScopedStores } from "@/stores/backend-scoped-store-reset"
 
 export type { RemoteTransportConfig, Transport, UnsubscribeFn } from "./types"
 export type { OpenABTransportConfig } from "../openab-transport/types"
@@ -10,6 +13,7 @@ let _remoteTransport: Transport | null = null
 let _remoteConfig: RemoteTransportConfig | null = null
 let _openabTransport: Transport | null = null
 let _openabConfig: OpenABTransportConfig | null = null
+let _openabScope: string | null = null
 
 function createTauriTransport(): Transport {
   // Use dynamic require to avoid bundling tauri deps in web mode.
@@ -52,12 +56,13 @@ export function configureRemoteDesktopTransport(
 }
 
 export function configureOpenABTransport(config: OpenABTransportConfig): void {
+  const nextScope = openABConnectionScope(config.baseUrl, config.profileId)
+  if (_openabScope !== nextScope) {
+    resetBackendScopedStores()
+    _openabScope = nextScope
+  }
   _openabTransport?.destroy?.()
   _openabConfig = config
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { OpenABTransport } = require("../openab-transport") as {
-    OpenABTransport: new (config: OpenABTransportConfig) => Transport
-  }
   _openabTransport = new OpenABTransport(config)
 }
 
@@ -65,6 +70,7 @@ export function clearOpenABTransport(): void {
   _openabTransport?.destroy?.()
   _openabTransport = null
   _openabConfig = null
+  _openabScope = null
 }
 
 export function clearRemoteDesktopTransport(): void {
@@ -140,4 +146,5 @@ export function __resetTransportForTests(): void {
   _remoteConfig = null
   _openabTransport = null
   _openabConfig = null
+  _openabScope = null
 }
