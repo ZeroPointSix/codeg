@@ -19,15 +19,28 @@ export function OpenABTransportProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
-    if (isDesktop()) {
-      setReady(true)
-      return
+    let mounted = true
+    const markReady = () => {
+      queueMicrotask(() => {
+        if (mounted) setReady(true)
+      })
     }
+
+    if (isDesktop()) {
+      markReady()
+      return () => {
+        mounted = false
+      }
+    }
+
     const token = localStorage.getItem("codeg_token")
     if (!token) {
-      setReady(true)
-      return
+      markReady()
+      return () => {
+        mounted = false
+      }
     }
+
     configureOpenABTransport({
       baseUrl: getOpenABBaseUrl(),
       token,
@@ -39,8 +52,12 @@ export function OpenABTransportProvider({ children }: { children: ReactNode }) {
         router.replace("/login")
       },
     })
-    setReady(true)
-    return clearOpenABTransport
+    markReady()
+
+    return () => {
+      mounted = false
+      clearOpenABTransport()
+    }
   }, [router])
 
   return ready ? children : null
