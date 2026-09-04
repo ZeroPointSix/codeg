@@ -1,11 +1,17 @@
 import type {
   AcpAgentInfo,
   AcpAgentStatus,
+  AgentStats,
   ConnectionInfo,
   ConversationConnectionInfo,
   ConversationSummary,
+  DbConversationSummary,
   FolderDetail,
+  GitHeadInfo,
+  OpenedTab,
+  OpenedTabsSnapshot,
   PromptInputBlock,
+  SaveTabsOutcome,
 } from "@/lib/types"
 import type {
   CallOptions,
@@ -33,6 +39,8 @@ import type {
 const REQUEST_TIMEOUT_MS = 60_000
 const RECONNECT_INITIAL_MS = 1_000
 const RECONNECT_MAX_MS = 30_000
+const OPENAB_AGENT_TYPE = "openab"
+const OPENAB_IDENTITY_KEY = "openab_conversation_identities_v1"
 
 const EMPTY_LIST_COMMANDS = new Set([
   "automation_list",
@@ -44,33 +52,46 @@ const EMPTY_LIST_COMMANDS = new Set([
   "officecli_skill_list_all_install_statuses",
 ])
 
-const EMPTY_OBJECT_COMMANDS = new Set([
-  "app_update_status",
-  "app_update_state",
-  "check_app_update",
-  "get_system_language_settings",
-  "get_system_terminal_settings",
-])
+interface PersistedIdentityState {
+  nextId: number
+  entries: Array<{ sessionId: string; conversationId: number }>
+}
 
 export class OpenABTransport implements Transport {
   private readonly config: OpenABTransportConfig
+  private readonly fetchImpl: typeof fetch
+  private readonly storage: Storage | null
   private readonly stream: OpenABEventStream
   private readonly sseListeners = new Set<(event: OpenABSseEvent) => void>()
   private readonly reconnectListeners = new Set<() => void>()
+  private readonly sessionToConversationId = new Map<string, number>()
+  private readonly conversationIdToSession = new Map<number, string>()
   private sseController: AbortController | null = null
   private sseTask: Promise<void> | null = null
   private lastEventId: string | null = null
   private destroyed = false
-  private pendingSessionId: string | null = null
+  private pendingSessionIds: string[] = []
+  private nextConversationId = 1
 
   constructor(config: OpenABTransportConfig) {
     this.config = {
       ...config,
       baseUrl: config.baseUrl.replace(/\/+$/, ""),
     }
+    this.fetchImpl = config.fetchImpl ?? globalThis.fetch.bind(globalThis)
+    this.storage =
+      config.storage === undefined
+        ? typeof localStorage === "undefined"
+          ? null
+          : localStorage
+        : config.storage
+    this.restoreIdentities()
     this.stream = new OpenABEventStream({
       loadSnapshot: (sessionId, eventSeq) =>
         this.loadLiveSnapshot(sessionId, eventSeq),
+      recover: async () => {
+        await this.listSessions()
+      },
       subscribe: (listener) => this.subscribeSse(listener),
     })
   }
@@ -81,20 +102,62 @@ export class OpenABTransport implements Transport {
     options?: CallOptions
   ): Promise<T> {
     if (EMPTY_LIST_COMMANDS.has(command)) return [] as T
-    if (EMPTY_OBJECT_COMMANDS.has(command)) return {} as T
 
     switch (command) {
       case "health":
-        return { status: "ok" } as T
+        return { status: "ok", version: "0.30.3" } as T
+      case "app_update_state":
+        return { seq: 0, status: "idle" } as T
+      case "app_update_status":
+        return {
+          currentVersion: "0.30.3",
+          selfUpdateSupported: false,
+          capability: "reexec",
+          runtime: "openab",
+          restartDelayMs: 0,
+          rollbackAvailable: false,
+          liveProgress: false,
+        } as T
+      case "check_app_update":
+        return {
+          currentVersion: "0.30.3",
+          update: null,
+          selfUpdateSupported: false,
+          liveProgress: false,
+        } as T
       case "get_feedback_settings":
+        return { enabled: false } as T
+      case "get_system_language_settings":
+        return { mode: "system", language: "en" } as T
+      case "get_system_terminal_settings":
+        return { default_shell: null } as T
+      case "get_available_terminal_shells":
+        return { options: [], resolved_shell: "" } as T
+      case "get_system_proxy_settings":
+        return { enabled: false, proxy_url: null } as T
+      case "get_system_rendering_settings":
+        return { disable_hardware_acceleration: false } as T
+      case "get_system_autostart_settings":
         return { enabled: false } as T
       case "list_folder_groups":
       case "load_folder_history":
       case "list_child_conversations":
+      case "list_open_folder_details":
         return [] as T
       case "list_all_folder_details":
-      case "list_open_folder_details":
         return [this.virtualFolder()] as T
+      case "get_folder":
+      case "open_folder_by_id":
+        return this.virtualFolder() as T
+      case "get_git_branch":
+        return null as T
+      case "get_git_head":
+        return ({
+          is_repo: false,
+          branch: null,
+          detached: false,
+          short_sha: null,
+        } satisfies GitHeadInfo) as T
       case "list_opened_tabs":
         return this.readOpenedTabs() as T
       case "save_opened_tabs":
@@ -111,27 +174,53 @@ export class OpenABTransport implements Transport {
       case "acp_list_agents":
         return [this.agentInfo()] as T
       case "acp_get_agent_status":
-        return this.agentStatus(
-          String(args.agentType ?? this.config.profileId)
-        ) as T
+        return this.agentStatus() as T
       case "list_all_conversations": {
         const sessions = await this.listSessions(options)
-        return sessions.map((session) => toConversationSummary(session)) as T
+        return sessions.map((session) => this.conversationSummary(session)) as T
       }
       case "list_conversations": {
         const sessions = await this.listSessions(options)
         return sessions.map((session) => this.classicSummary(session)) as T
       }
       case "get_folder_conversation": {
-        const sessionId = String(args.conversationId)
+        const sessionId = this.sessionIdForConversation(args.conversationId)
         const [session, transcript] = await Promise.all([
           this.getSession(sessionId, options),
           this.getTranscript(sessionId, options),
         ])
-        return toConversationDetail(session, transcript) as T
+        return toConversationDetail(
+          session,
+          transcript,
+          this.conversationIdForSession(sessionId)
+        ) as T
+      }
+      case "get_folder_conversation_turns": {
+        const sessionId = this.sessionIdForConversation(args.conversationId)
+        const transcript = await this.getTranscript(sessionId, options)
+        const turns = transcriptToTurns(transcript)
+        const requestedBefore = Number(args.beforeIndex)
+        const beforeIndex = Math.min(
+          Number.isFinite(requestedBefore) ? requestedBefore : turns.length,
+          turns.length
+        )
+        const limit = Math.max(1, Number(args.limit) || 50)
+        const start = Math.max(0, beforeIndex - limit)
+        return {
+          turns: turns.slice(start, beforeIndex),
+          turns_offset: start,
+          turns_total: turns.length,
+          assistant_turns_before_offset: turns
+            .slice(0, start)
+            .filter((turn) => turn.role === "assistant").length,
+          prefix_hash: "0000000000000000",
+          prefix_hash_before_index: "0000000000000000",
+          uncovered_prefix_max_ts:
+            start > 0 ? turns[start - 1]?.timestamp ?? null : null,
+        } as T
       }
       case "get_conversation": {
-        const sessionId = String(args.conversationId)
+        const sessionId = this.sessionIdForConversation(args.conversationId)
         const [session, transcript] = await Promise.all([
           this.getSession(sessionId, options),
           this.getTranscript(sessionId, options),
@@ -147,15 +236,17 @@ export class OpenABTransport implements Transport {
           return args.sessionId as T
         }
         const session = await this.createSession(options)
-        this.pendingSessionId = session.session_id
+        this.pendingSessionIds.push(session.session_id)
         return session.session_id as T
       }
-      case "create_conversation":
-        return this.claimOrCreateSession(options) as Promise<T>
+      case "create_conversation": {
+        const sessionId = await this.claimOrCreateSession(options)
+        return this.conversationIdForSession(sessionId) as T
+      }
       case "create_chat_conversation": {
         const sessionId = await this.claimOrCreateSession(options)
         return {
-          conversationId: sessionId as unknown as number,
+          conversationId: this.conversationIdForSession(sessionId),
           folderId: OPENAB_FOLDER_ID,
           folder: this.virtualFolder(),
         } as T
@@ -183,12 +274,14 @@ export class OpenABTransport implements Transport {
       case "acp_get_session_snapshot":
         return this.loadLiveSnapshot(String(args.connectionId)) as Promise<T>
       case "acp_get_session_snapshot_by_conversation":
-        return this.loadLiveSnapshot(String(args.conversationId)) as Promise<T>
+        return this.loadLiveSnapshot(
+          this.sessionIdForConversation(args.conversationId)
+        ) as Promise<T>
       case "acp_find_connection_for_conversation": {
         const sessionId =
           typeof args.sessionId === "string"
             ? args.sessionId
-            : String(args.conversationId)
+            : this.sessionIdForConversation(args.conversationId)
         await this.getSession(sessionId, options)
         const result: ConversationConnectionInfo = {
           connection_id: sessionId,
@@ -200,7 +293,7 @@ export class OpenABTransport implements Transport {
         const sessions = await this.listSessions(options)
         const connections: ConnectionInfo[] = sessions.map((session) => ({
           id: session.session_id,
-          agent_type: session.agent,
+          agent_type: OPENAB_AGENT_TYPE,
           status: mapOpenABStatus(session.status),
         }))
         return connections as T
@@ -209,6 +302,19 @@ export class OpenABTransport implements Transport {
         return true as T
       case "acp_disconnect":
         return undefined as T
+      case "get_stats": {
+        const sessions = await this.listSessions(options)
+        return this.statsFor(
+          sessions.map((session) => this.conversationSummary(session))
+        ) as T
+      }
+      case "get_sidebar_data": {
+        const sessions = await this.listSessions(options)
+        const conversations = sessions.map((session) =>
+          this.conversationSummary(session)
+        )
+        return { folders: [], stats: this.statsFor(conversations) } as T
+      }
       default:
         return this.localUnsupported(command) as T
     }
@@ -257,7 +363,7 @@ export class OpenABTransport implements Transport {
     )
     let response: Response
     try {
-      response = await fetch(`${this.config.baseUrl}${path}`, {
+      response = await this.fetchImpl(`${this.config.baseUrl}${path}`, {
         ...init,
         headers: {
           Accept: "application/json",
@@ -283,21 +389,31 @@ export class OpenABTransport implements Transport {
     return response.json() as Promise<T>
   }
 
-  private listSessions(
+  private async listSessions(
     options?: CallOptions
   ): Promise<OpenABSessionSnapshot[]> {
-    return this.request("/api/v1/sessions", {}, options)
+    const sessions = await this.request<OpenABSessionSnapshot[]>(
+      "/api/v1/sessions",
+      {},
+      options
+    )
+    for (const session of sessions) {
+      this.conversationIdForSession(session.session_id)
+    }
+    return sessions
   }
 
-  private getSession(
+  private async getSession(
     sessionId: string,
     options?: CallOptions
   ): Promise<OpenABSessionSnapshot> {
-    return this.request(
+    const session = await this.request<OpenABSessionSnapshot>(
       `/api/v1/sessions/${encodeURIComponent(sessionId)}`,
       {},
       options
     )
+    this.conversationIdForSession(session.session_id)
+    return session
   }
 
   private getTranscript(
@@ -311,8 +427,10 @@ export class OpenABTransport implements Transport {
     )
   }
 
-  private createSession(options?: CallOptions): Promise<OpenABSessionSnapshot> {
-    return this.request(
+  private async createSession(
+    options?: CallOptions
+  ): Promise<OpenABSessionSnapshot> {
+    const session = await this.request<OpenABSessionSnapshot>(
       "/api/v1/sessions",
       {
         method: "POST",
@@ -320,14 +438,13 @@ export class OpenABTransport implements Transport {
       },
       options
     )
+    this.conversationIdForSession(session.session_id)
+    return session
   }
 
   private async claimOrCreateSession(options?: CallOptions): Promise<string> {
-    if (this.pendingSessionId) {
-      const sessionId = this.pendingSessionId
-      this.pendingSessionId = null
-      return sessionId
-    }
+    const pending = this.pendingSessionIds.shift()
+    if (pending) return pending
     return (await this.createSession(options)).session_id
   }
 
@@ -336,7 +453,12 @@ export class OpenABTransport implements Transport {
       this.getSession(sessionId),
       this.getTranscript(sessionId),
     ])
-    return toLiveSessionSnapshot(session, transcript, eventSeq)
+    return toLiveSessionSnapshot(
+      session,
+      transcript,
+      this.conversationIdForSession(sessionId),
+      eventSeq
+    )
   }
 
   private promptText(blocks: unknown): string {
@@ -359,7 +481,7 @@ export class OpenABTransport implements Transport {
       name: "OpenAB",
       path: "/workspace",
       git_branch: null,
-      default_agent_type: this.config.profileId,
+      default_agent_type: OPENAB_AGENT_TYPE,
       last_opened_at: new Date().toISOString(),
       sort_order: 0,
       color: "inherit",
@@ -373,7 +495,7 @@ export class OpenABTransport implements Transport {
   private classicSummary(session: OpenABSessionSnapshot): ConversationSummary {
     return {
       id: session.session_id,
-      agent_type: session.agent,
+      agent_type: OPENAB_AGENT_TYPE,
       folder_path: session.workdir,
       folder_name: session.workdir.split("/").filter(Boolean).pop() ?? "OpenAB",
       title: session.title ?? session.profile_name,
@@ -385,9 +507,9 @@ export class OpenABTransport implements Transport {
     }
   }
 
-  private agentStatus(agentType: string): AcpAgentStatus {
+  private agentStatus(): AcpAgentStatus {
     return {
-      agent_type: agentType,
+      agent_type: OPENAB_AGENT_TYPE,
       available: true,
       enabled: true,
       installed_version: null,
@@ -397,36 +519,166 @@ export class OpenABTransport implements Transport {
 
   private agentInfo(): AcpAgentInfo {
     return {
-      agent_type: this.config.profileId,
+      agent_type: OPENAB_AGENT_TYPE,
       skills_capable: false,
-      registry_id: this.config.profileId,
+      registry_id: OPENAB_AGENT_TYPE,
       registry_version: null,
       supports_custom_version: false,
-      name: this.config.profileId,
-      description: "OpenAB managed profile",
+      name: "OpenAB",
+      description: `OpenAB profile ${this.config.profileId}`,
       available: true,
-      distribution_type: "openab",
+      distribution_type: "remote",
       is_acp_adapter: false,
-    } as AcpAgentInfo
+      custom_source: null,
+      enabled: true,
+      sort_order: 0,
+      installed_version: null,
+      env: {},
+      host_tools_agent_mode: false,
+      config_json: null,
+      config_file_path: null,
+      opencode_auth_json: null,
+      codex_auth_json: null,
+      codex_config_toml: null,
+      codex_model_catalog: null,
+      codex_sandbox_settings: null,
+      cline_secrets_json: null,
+      hermes_config_yaml: null,
+      grok_config_toml: null,
+      grok_settings: null,
+      cursor_cli_config_json: null,
+      cursor_settings: null,
+      model_provider_id: null,
+      icon_url: null,
+    }
   }
 
-  private readOpenedTabs(): unknown {
+  private conversationSummary(
+    session: OpenABSessionSnapshot
+  ): DbConversationSummary {
+    return toConversationSummary(
+      session,
+      this.conversationIdForSession(session.session_id)
+    )
+  }
+
+  private statsFor(conversations: DbConversationSummary[]): AgentStats {
+    return {
+      total_conversations: conversations.length,
+      total_messages: conversations.reduce(
+        (total, conversation) => total + conversation.message_count,
+        0
+      ),
+      by_agent:
+        conversations.length === 0
+          ? []
+          : [
+              {
+                agent_type: OPENAB_AGENT_TYPE,
+                conversation_count: conversations.length,
+              },
+            ],
+    }
+  }
+
+  private conversationIdForSession(sessionId: string): number {
+    const existing = this.sessionToConversationId.get(sessionId)
+    if (existing !== undefined) return existing
+
+    const conversationId = this.nextConversationId
+    this.nextConversationId += 1
+    this.sessionToConversationId.set(sessionId, conversationId)
+    this.conversationIdToSession.set(conversationId, sessionId)
+    this.persistIdentities()
+    return conversationId
+  }
+
+  private sessionIdForConversation(value: unknown): string {
+    if (typeof value === "number" && Number.isSafeInteger(value)) {
+      const sessionId = this.conversationIdToSession.get(value)
+      if (sessionId) return sessionId
+    }
+    if (typeof value === "string" && value) {
+      const numeric = Number(value)
+      if (Number.isSafeInteger(numeric)) {
+        const sessionId = this.conversationIdToSession.get(numeric)
+        if (sessionId) return sessionId
+      }
+      return value
+    }
+    throw { code: "session_not_found", message: "session not found", status: 404 }
+  }
+
+  private restoreIdentities(): void {
+    if (!this.storage) return
     try {
-      return JSON.parse(
-        localStorage.getItem("openab_opened_tabs") ?? '{"version":0,"items":[]}'
-      )
+      const raw = this.storage.getItem(OPENAB_IDENTITY_KEY)
+      if (!raw) return
+      const state = JSON.parse(raw) as Partial<PersistedIdentityState>
+      this.nextConversationId = Math.max(1, Number(state.nextId) || 1)
+      for (const entry of state.entries ?? []) {
+        if (
+          typeof entry.sessionId !== "string" ||
+          !Number.isSafeInteger(entry.conversationId) ||
+          entry.conversationId <= 0
+        ) {
+          continue
+        }
+        this.sessionToConversationId.set(entry.sessionId, entry.conversationId)
+        this.conversationIdToSession.set(entry.conversationId, entry.sessionId)
+        this.nextConversationId = Math.max(
+          this.nextConversationId,
+          entry.conversationId + 1
+        )
+      }
+    } catch {
+      // Invalid local state is replaced when the first session is observed.
+    }
+  }
+
+  private persistIdentities(): void {
+    if (!this.storage) return
+    const state: PersistedIdentityState = {
+      nextId: this.nextConversationId,
+      entries: [...this.sessionToConversationId].map(
+        ([sessionId, conversationId]) => ({ sessionId, conversationId })
+      ),
+    }
+    this.storage.setItem(OPENAB_IDENTITY_KEY, JSON.stringify(state))
+  }
+
+  private readOpenedTabs(): OpenedTabsSnapshot {
+    if (!this.storage) return { version: 0, items: [] }
+    try {
+      const parsed = JSON.parse(
+        this.storage.getItem("openab_opened_tabs") ??
+          '{"version":0,"items":[]}'
+      ) as Partial<OpenedTabsSnapshot>
+      return {
+        version: Number(parsed.version) || 0,
+        items: Array.isArray(parsed.items) ? parsed.items : [],
+      }
     } catch {
       return { version: 0, items: [] }
     }
   }
 
-  private saveOpenedTabs(args: Record<string, unknown>): unknown {
-    const snapshot = {
-      version: Number(args.expectedVersion ?? 0) + 1,
-      items: Array.isArray(args.items) ? args.items : [],
+  private saveOpenedTabs(args: Record<string, unknown>): SaveTabsOutcome {
+    const current = this.readOpenedTabs()
+    if (Number(args.expectedVersion) !== current.version) {
+      return {
+        accepted: false,
+        version: current.version,
+        tabs: current.items,
+      }
     }
-    localStorage.setItem("openab_opened_tabs", JSON.stringify(snapshot))
-    return snapshot
+    const items = Array.isArray(args.items) ? (args.items as OpenedTab[]) : []
+    const version = current.version + 1
+    this.storage?.setItem(
+      "openab_opened_tabs",
+      JSON.stringify({ version, items })
+    )
+    return { accepted: true, version, tabs: items }
   }
 
   private localUnsupported(command: string): unknown {
@@ -465,6 +717,9 @@ export class OpenABTransport implements Transport {
     if (this.sseTask || this.destroyed) return
     this.sseTask = this.runSse().finally(() => {
       this.sseTask = null
+      if (!this.destroyed && this.sseListeners.size > 0) {
+        queueMicrotask(() => this.ensureSse())
+      }
     })
   }
 
@@ -473,7 +728,7 @@ export class OpenABTransport implements Transport {
     while (!this.destroyed && this.sseListeners.size > 0) {
       this.sseController = new AbortController()
       try {
-        const response = await fetch(
+        const response = await this.fetchImpl(
           `${this.config.baseUrl}/api/v1/sessions/events`,
           {
             headers: {
@@ -510,10 +765,17 @@ export class OpenABTransport implements Transport {
             for (const subscriber of this.sseListeners) subscriber(event)
           }
         }
+        const final = parseSseChunk(buffer, `${decoder.decode()}\n\n`)
+        for (const event of final.events) {
+          if (event.id) this.lastEventId = event.id
+          for (const subscriber of this.sseListeners) subscriber(event)
+        }
       } catch (error) {
         if (
           this.destroyed ||
-          (error instanceof DOMException && error.name === "AbortError")
+          (error &&
+            typeof error === "object" &&
+            (error as { name?: unknown }).name === "AbortError")
         ) {
           return
         }
