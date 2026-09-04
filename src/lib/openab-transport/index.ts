@@ -3,7 +3,6 @@ import type {
   AcpAgentStatus,
   ConnectionInfo,
   ConversationConnectionInfo,
-  ConversationDetail,
   ConversationSummary,
   FolderDetail,
   PromptInputBlock,
