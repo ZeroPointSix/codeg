@@ -62,6 +62,8 @@ export interface OpenABTransportConfig {
   token: string
   profileId: string
   onUnauthorized?: () => void
+  fetchImpl?: typeof fetch
+  storage?: Storage | null
 }
 
 export interface OpenABErrorBody {
