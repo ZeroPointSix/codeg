@@ -172,7 +172,11 @@ export class OpenABEventStream implements EventStream {
 
   private async handleEvent(event: OpenABSseEvent): Promise<void> {
     if (isRecoveryEvent(event)) {
-      await this.dependencies.recover?.()
+      try {
+        await this.dependencies.recover?.()
+      } catch {
+        // Per-session hydration still repairs active views when global refresh fails.
+      }
       await Promise.all(
         [...this.subscriptions.values()].map((subscription) =>
           this.hydrate(subscription)
