@@ -152,12 +152,12 @@ export class OpenABTransport implements Transport {
       case "get_git_branch":
         return null as T
       case "get_git_head":
-        return ({
+        return {
           is_repo: false,
           branch: null,
           detached: false,
           short_sha: null,
-        } satisfies GitHeadInfo) as T
+        } satisfies GitHeadInfo as T
       case "list_opened_tabs":
         return this.readOpenedTabs() as T
       case "save_opened_tabs":
@@ -216,7 +216,7 @@ export class OpenABTransport implements Transport {
           prefix_hash: "0000000000000000",
           prefix_hash_before_index: "0000000000000000",
           uncovered_prefix_max_ts:
-            start > 0 ? turns[start - 1]?.timestamp ?? null : null,
+            start > 0 ? (turns[start - 1]?.timestamp ?? null) : null,
         } as T
       }
       case "get_conversation": {
@@ -607,7 +607,11 @@ export class OpenABTransport implements Transport {
       }
       return value
     }
-    throw { code: "session_not_found", message: "session not found", status: 404 }
+    throw {
+      code: "session_not_found",
+      message: "session not found",
+      status: 404,
+    }
   }
 
   private restoreIdentities(): void {
@@ -652,8 +656,7 @@ export class OpenABTransport implements Transport {
     if (!this.storage) return { version: 0, items: [] }
     try {
       const parsed = JSON.parse(
-        this.storage.getItem("openab_opened_tabs") ??
-          '{"version":0,"items":[]}'
+        this.storage.getItem("openab_opened_tabs") ?? '{"version":0,"items":[]}'
       ) as Partial<OpenedTabsSnapshot>
       return {
         version: Number(parsed.version) || 0,

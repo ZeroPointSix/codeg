@@ -6,10 +6,7 @@ import type {
 } from "@/lib/types"
 import { OpenABEventStream, parseSseChunk } from "./event-stream"
 import { OpenABTransport } from "./index"
-import type {
-  OpenABSessionSnapshot,
-  OpenABTranscriptSnapshot,
-} from "./types"
+import type { OpenABSessionSnapshot, OpenABTranscriptSnapshot } from "./types"
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>()
@@ -98,7 +95,9 @@ afterEach(() => {
 describe("OpenABTransport", () => {
   it("keeps opaque session IDs in external_id and persists local numeric IDs", async () => {
     const storage = new MemoryStorage()
-    const firstFetch = vi.fn(async () => json([session()])) as unknown as typeof fetch
+    const firstFetch = vi.fn(async () =>
+      json([session()])
+    ) as unknown as typeof fetch
     const first = new OpenABTransport({
       baseUrl: "https://openab.test",
       token: "admin-token",
@@ -204,9 +203,9 @@ describe("OpenABTransport", () => {
       storage: new MemoryStorage(),
     })
 
-    await expect(transport.call("list_all_conversations")).rejects.toMatchObject(
-      { status: 401 }
-    )
+    await expect(
+      transport.call("list_all_conversations")
+    ).rejects.toMatchObject({ status: 401 })
     expect(onUnauthorized).toHaveBeenCalledOnce()
     transport.destroy()
   })
@@ -235,7 +234,9 @@ describe("OpenAB SSE", () => {
   })
 
   it("refetches global and selected state after a cursor reset", async () => {
-    let listener: ((event: { id: string | null; event: string; data: unknown }) => void) | null = null
+    let listener:
+      | ((event: { id: string | null; event: string; data: unknown }) => void)
+      | null = null
     const snapshot = { event_seq: 7 } as LiveSessionSnapshot
     const loadSnapshot = vi.fn(async () => snapshot)
     const recover = vi.fn(async () => {})
