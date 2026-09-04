@@ -4,19 +4,32 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useTranslations } from "next-intl"
 import { isDesktop } from "@/lib/platform"
+import {
+  OPENAB_BASE_URL_KEY,
+  OPENAB_DEFAULT_PROFILE_ID,
+  OPENAB_PROFILE_ID_KEY,
+} from "@/components/providers/openab-transport-provider"
 
 export default function LoginPage() {
   const router = useRouter()
   const t = useTranslations("LoginPage")
+  const [baseUrl, setBaseUrl] = useState("")
+  const [profileId, setProfileId] = useState(OPENAB_DEFAULT_PROFILE_ID)
   const [token, setToken] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     document.title = t("documentTitle")
+    setBaseUrl(
+      localStorage.getItem(OPENAB_BASE_URL_KEY) ?? window.location.origin
+    )
+    setProfileId(
+      localStorage.getItem(OPENAB_PROFILE_ID_KEY) ??
+        OPENAB_DEFAULT_PROFILE_ID
+    )
   }, [t])
 
-  // Desktop users skip login entirely
   if (isDesktop()) {
     router.replace("/workspace")
     return null
@@ -27,19 +40,25 @@ export default function LoginPage() {
     setError("")
     setLoading(true)
 
+    const normalizedBaseUrl = (baseUrl.trim() || window.location.origin).replace(
+      /\/+$/,
+      ""
+    )
     try {
-      // Validate token by calling a lightweight API endpoint
-      const res = await fetch("/api/health", {
-        method: "POST",
+      const res = await fetch(`${normalizedBaseUrl}/api/v1/sessions`, {
         headers: {
-          "Content-Type": "application/json",
+          Accept: "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: "{}",
       })
 
       if (res.ok) {
         localStorage.setItem("codeg_token", token)
+        localStorage.setItem(OPENAB_BASE_URL_KEY, normalizedBaseUrl)
+        localStorage.setItem(
+          OPENAB_PROFILE_ID_KEY,
+          profileId.trim() || OPENAB_DEFAULT_PROFILE_ID
+        )
         router.replace("/workspace")
       } else if (res.status === 401) {
         setError(t("invalidToken"))
@@ -62,16 +81,30 @@ export default function LoginPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <input
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder={t("tokenPlaceholder")}
-              autoFocus
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-base md:text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </div>
+          <input
+            type="url"
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+            placeholder="OpenAB URL"
+            aria-label="OpenAB URL"
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:text-sm"
+          />
+          <input
+            type="text"
+            value={profileId}
+            onChange={(e) => setProfileId(e.target.value)}
+            placeholder="Profile ID"
+            aria-label="Profile ID"
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:text-sm"
+          />
+          <input
+            type="password"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder={t("tokenPlaceholder")}
+            autoFocus
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:text-sm"
+          />
 
           {error && <p className="text-sm text-destructive">{error}</p>}
 
