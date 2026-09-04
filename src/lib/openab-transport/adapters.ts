@@ -199,8 +199,7 @@ export function toLiveSessionSnapshot(
     fork_supported: false,
     available_commands: [],
     selectors_ready: true,
-    event_seq:
-      eventSeq ?? Math.max(0, transcript.stream_next_sequence - 1),
+    event_seq: eventSeq ?? Math.max(0, transcript.stream_next_sequence - 1),
   }
 }
 

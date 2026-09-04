@@ -3,9 +3,7 @@
 import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { isDesktop } from "@/lib/platform"
-import {
-  OPENAB_BASE_URL_KEY,
-} from "@/components/providers/openab-transport-provider"
+import { OPENAB_BASE_URL_KEY } from "@/components/providers/openab-transport-provider"
 
 export default function Page() {
   const router = useRouter()

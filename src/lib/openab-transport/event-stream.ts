@@ -48,11 +48,17 @@ function sessionIdForEvent(event: OpenABSseEvent): string | null {
 
 function isRecoveryEvent(event: OpenABSseEvent): boolean {
   if (event.event === "cursor_reset") return true
-  if (event.event !== "error" || !event.data || typeof event.data !== "object") {
+  if (
+    event.event !== "error" ||
+    !event.data ||
+    typeof event.data !== "object"
+  ) {
     return false
   }
   const error = (event.data as { error?: unknown }).error
-  return error === "event history unavailable" || error === "event stream lagged"
+  return (
+    error === "event history unavailable" || error === "event stream lagged"
+  )
 }
 
 function lifecycleEnvelope(
@@ -76,7 +82,8 @@ function lifecycleEnvelope(
     }
   }
   const status = data.snapshot?.status
-  if (event.event !== "status_changed" || typeof status !== "string") return null
+  if (event.event !== "status_changed" || typeof status !== "string")
+    return null
   if (status === "idle") {
     return {
       seq,
@@ -209,9 +216,7 @@ export function parseSseChunk(
       const separator = line.indexOf(":")
       const field = separator === -1 ? line : line.slice(0, separator)
       const value =
-        separator === -1
-          ? ""
-          : line.slice(separator + 1).replace(/^ /, "")
+        separator === -1 ? "" : line.slice(separator + 1).replace(/^ /, "")
       if (field === "id") id = value
       if (field === "event") event = value
       if (field === "data") data.push(value)

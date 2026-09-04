@@ -51,9 +51,7 @@ export function configureRemoteDesktopTransport(
   _remoteTransport = new RemoteDesktopTransport(config)
 }
 
-export function configureOpenABTransport(
-  config: OpenABTransportConfig
-): void {
+export function configureOpenABTransport(config: OpenABTransportConfig): void {
   _openabTransport?.destroy?.()
   _openabConfig = config
   // eslint-disable-next-line @typescript-eslint/no-require-imports

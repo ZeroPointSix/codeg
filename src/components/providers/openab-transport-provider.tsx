@@ -3,10 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react"
 import { useRouter } from "next/navigation"
 import { isDesktop } from "@/lib/platform"
-import {
-  clearOpenABTransport,
-  configureOpenABTransport,
-} from "@/lib/transport"
+import { clearOpenABTransport, configureOpenABTransport } from "@/lib/transport"
 
 export const OPENAB_BASE_URL_KEY = "openab_base_url"
 export const OPENAB_PROFILE_ID_KEY = "openab_profile_id"
@@ -17,11 +14,7 @@ export function getOpenABBaseUrl(): string {
   return (saved || window.location.origin).replace(/\/+$/, "")
 }
 
-export function OpenABTransportProvider({
-  children,
-}: {
-  children: ReactNode
-}) {
+export function OpenABTransportProvider({ children }: { children: ReactNode }) {
   const router = useRouter()
   const [ready, setReady] = useState(false)
 

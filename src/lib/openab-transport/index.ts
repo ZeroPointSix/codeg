@@ -112,7 +112,9 @@ export class OpenABTransport implements Transport {
       case "acp_list_agents":
         return [this.agentInfo()] as T
       case "acp_get_agent_status":
-        return this.agentStatus(String(args.agentType ?? this.config.profileId)) as T
+        return this.agentStatus(
+          String(args.agentType ?? this.config.profileId)
+        ) as T
       case "list_all_conversations": {
         const sessions = await this.listSessions(options)
         return sessions.map((session) => toConversationSummary(session)) as T
@@ -285,7 +287,9 @@ export class OpenABTransport implements Transport {
     return response.json() as Promise<T>
   }
 
-  private listSessions(options?: CallOptions): Promise<OpenABSessionSnapshot[]> {
+  private listSessions(
+    options?: CallOptions
+  ): Promise<OpenABSessionSnapshot[]> {
     return this.request("/api/v1/sessions", {}, options)
   }
 
@@ -311,9 +315,7 @@ export class OpenABTransport implements Transport {
     )
   }
 
-  private createSession(
-    options?: CallOptions
-  ): Promise<OpenABSessionSnapshot> {
+  private createSession(options?: CallOptions): Promise<OpenABSessionSnapshot> {
     return this.request(
       "/api/v1/sessions",
       {
@@ -333,10 +335,7 @@ export class OpenABTransport implements Transport {
     return (await this.createSession(options)).session_id
   }
 
-  private async loadLiveSnapshot(
-    sessionId: string,
-    eventSeq?: number
-  ) {
+  private async loadLiveSnapshot(sessionId: string, eventSeq?: number) {
     const [session, transcript] = await Promise.all([
       this.getSession(sessionId),
       this.getTranscript(sessionId),
@@ -418,8 +417,7 @@ export class OpenABTransport implements Transport {
   private readOpenedTabs(): unknown {
     try {
       return JSON.parse(
-        localStorage.getItem("openab_opened_tabs") ??
-          '{"version":0,"items":[]}'
+        localStorage.getItem("openab_opened_tabs") ?? '{"version":0,"items":[]}'
       )
     } catch {
       return { version: 0, items: [] }

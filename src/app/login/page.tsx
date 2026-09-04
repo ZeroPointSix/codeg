@@ -25,8 +25,7 @@ export default function LoginPage() {
       localStorage.getItem(OPENAB_BASE_URL_KEY) ?? window.location.origin
     )
     setProfileId(
-      localStorage.getItem(OPENAB_PROFILE_ID_KEY) ??
-        OPENAB_DEFAULT_PROFILE_ID
+      localStorage.getItem(OPENAB_PROFILE_ID_KEY) ?? OPENAB_DEFAULT_PROFILE_ID
     )
   }, [t])
 
@@ -40,10 +39,9 @@ export default function LoginPage() {
     setError("")
     setLoading(true)
 
-    const normalizedBaseUrl = (baseUrl.trim() || window.location.origin).replace(
-      /\/+$/,
-      ""
-    )
+    const normalizedBaseUrl = (
+      baseUrl.trim() || window.location.origin
+    ).replace(/\/+$/, "")
     try {
       const res = await fetch(`${normalizedBaseUrl}/api/v1/sessions`, {
         headers: {
