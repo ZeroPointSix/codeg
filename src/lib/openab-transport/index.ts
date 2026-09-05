@@ -44,6 +44,7 @@ const REQUEST_TIMEOUT_MS = 60_000
 const RECONNECT_INITIAL_MS = 1_000
 const RECONNECT_MAX_MS = 30_000
 const OPENAB_AGENT_TYPE = "openab"
+const OPENAB_AGENT_VERSION = "0.9.15"
 
 const EMPTY_LIST_COMMANDS = new Set([
   "automation_list",
@@ -124,12 +125,12 @@ export class OpenABTransport implements Transport {
 
     switch (command) {
       case "health":
-        return { status: "ok", version: "0.30.3" } as T
+        return { status: "ok", version: "0.30.4" } as T
       case "app_update_state":
         return { seq: 0, status: "idle" } as T
       case "app_update_status":
         return {
-          currentVersion: "0.30.3",
+          currentVersion: "0.30.4",
           selfUpdateSupported: false,
           capability: "reexec",
           runtime: "openab",
@@ -139,7 +140,7 @@ export class OpenABTransport implements Transport {
         } as T
       case "check_app_update":
         return {
-          currentVersion: "0.30.3",
+          currentVersion: "0.30.4",
           update: null,
           selfUpdateSupported: false,
           liveProgress: false,
@@ -162,6 +163,8 @@ export class OpenABTransport implements Transport {
       case "load_folder_history":
       case "list_child_conversations":
       case "list_open_folder_details":
+      case "list_folder_commands":
+      case "bootstrap_folder_commands_from_package_json":
         return [] as T
       case "list_all_folder_details":
         return [this.virtualFolder()] as T
@@ -579,7 +582,7 @@ export class OpenABTransport implements Transport {
       agent_type: OPENAB_AGENT_TYPE,
       available: true,
       enabled: true,
-      installed_version: null,
+      installed_version: OPENAB_AGENT_VERSION,
       is_acp_adapter: false,
     }
   }
@@ -599,7 +602,7 @@ export class OpenABTransport implements Transport {
       custom_source: null,
       enabled: true,
       sort_order: 0,
-      installed_version: null,
+      installed_version: OPENAB_AGENT_VERSION,
       env: {},
       host_tools_agent_mode: false,
       config_json: null,

@@ -18,13 +18,13 @@ export function getOpenABBaseUrl(): string {
 export function OpenABTransportProvider({ children }: { children: ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
-  const [ready, setReady] = useState(false)
+  const [readyPathname, setReadyPathname] = useState<string | null>(null)
 
   useEffect(() => {
     let mounted = true
     const markReady = () => {
       queueMicrotask(() => {
-        if (mounted) setReady(true)
+        if (mounted) setReadyPathname(pathname)
       })
     }
 
@@ -67,7 +67,7 @@ export function OpenABTransportProvider({ children }: { children: ReactNode }) {
     }
   }, [pathname, router])
 
-  if (!ready) {
+  if (readyPathname !== pathname) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">
         <Loader2 className="mr-2 size-4 animate-spin" />

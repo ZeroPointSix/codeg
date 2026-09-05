@@ -12,6 +12,7 @@ import {
 import { NextIntlClientProvider, type AbstractIntlMessages } from "next-intl"
 import { getFallbackMessages, getMessagesForLocale } from "@/i18n/messages"
 import {
+  DEFAULT_LANGUAGE_SETTINGS,
   fromIntlLocale,
   getSystemLocaleCandidates,
   LANGUAGE_COOKIE_KEY,
@@ -23,6 +24,7 @@ import {
   type IntlLocale,
 } from "@/lib/i18n"
 import { getSystemLanguageSettings } from "@/lib/api"
+import { isDesktop } from "@/lib/platform"
 import { disposeTauriListener } from "@/lib/tauri-listener"
 import { AppBootLoading } from "@/components/layout/app-boot-loading"
 import type { AppLocale, SystemLanguageSettings } from "@/lib/types"
@@ -64,6 +66,23 @@ function persistLanguageSettings(settings: SystemLanguageSettings) {
     )
   } catch {
     // Ignore write failures (e.g. disabled storage).
+  }
+}
+
+function getUnauthenticatedWebLanguageSettings(): SystemLanguageSettings | null {
+  if (typeof window === "undefined" || isDesktop()) return null
+
+  try {
+    if (localStorage.getItem("codeg_token")) return null
+
+    const stored = localStorage.getItem(LANGUAGE_SETTINGS_STORAGE_KEY)
+    return stored
+      ? normalizeLanguageSettings(
+          JSON.parse(stored) as Partial<SystemLanguageSettings>
+        )
+      : DEFAULT_LANGUAGE_SETTINGS
+  } catch {
+    return DEFAULT_LANGUAGE_SETTINGS
   }
 }
 
@@ -181,8 +200,12 @@ export function AppI18nProvider({
 
   useEffect(() => {
     let cancelled = false
+    const localSettings = getUnauthenticatedWebLanguageSettings()
+    const settingsRequest = localSettings
+      ? Promise.resolve(localSettings)
+      : getSystemLanguageSettings()
 
-    getSystemLanguageSettings()
+    settingsRequest
       .then((settings) => {
         if (cancelled) return
         setLanguageSettings(settings)

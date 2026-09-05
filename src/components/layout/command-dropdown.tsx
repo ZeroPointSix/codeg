@@ -123,7 +123,7 @@ export function CommandDropdown() {
     try {
       const list = await listFolderCommands(folderId)
       if (epoch !== loadEpochRef.current) return
-      setCommands(list)
+      setCommands(Array.isArray(list) ? list : [])
     } catch (err) {
       console.error("Failed to load commands:", err)
     }
@@ -138,9 +138,10 @@ export function CommandDropdown() {
         setBootstrapping(false)
         const data = await listFolderCommands(folderId)
         if (ignore) return
+        const list = Array.isArray(data) ? data : []
 
-        if (data.length > 0 || !folderPath) {
-          setCommands(data)
+        if (list.length > 0 || !folderPath) {
+          setCommands(list)
           return
         }
 
@@ -149,7 +150,9 @@ export function CommandDropdown() {
           folderId,
           folderPath
         )
-        if (!ignore) setCommands(bootstrapped)
+        if (!ignore) {
+          setCommands(Array.isArray(bootstrapped) ? bootstrapped : [])
+        }
       } catch (err) {
         console.error("Failed to load commands:", err)
       } finally {
@@ -209,10 +212,11 @@ export function CommandDropdown() {
     [clearLink]
   )
 
+  const commandList = Array.isArray(commands) ? commands : []
   const activeCmd = useMemo(
     () =>
-      commands.find((c) => c.id === selectedCommandId) ?? commands[0] ?? null,
-    [commands, selectedCommandId]
+      commandList.find((c) => c.id === selectedCommandId) ?? commandList[0] ?? null,
+    [commandList, selectedCommandId]
   )
   const activeTerminalId = activeCmd
     ? resolveLiveCommandTerminalId(links, activeCmd.id, isTerminalLive)
@@ -243,7 +247,7 @@ export function CommandDropdown() {
   // the dialog mid-edit.
   return (
     <>
-      {commands.length === 0 ? (
+      {commandList.length === 0 ? (
         // No commands → show add command button
         <Button
           variant="ghost"
@@ -275,7 +279,7 @@ export function CommandDropdown() {
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-56">
-              {commands.map((cmd) => (
+              {commandList.map((cmd) => (
                 <DropdownMenuItem
                   key={cmd.id}
                   onClick={() => handleSelectCommand(cmd)}
