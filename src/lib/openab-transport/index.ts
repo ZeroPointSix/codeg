@@ -163,6 +163,8 @@ export class OpenABTransport implements Transport {
       case "load_folder_history":
       case "list_child_conversations":
       case "list_open_folder_details":
+      case "list_folder_commands":
+      case "bootstrap_folder_commands_from_package_json":
         return [] as T
       case "list_all_folder_details":
         return [this.virtualFolder()] as T
