@@ -97,6 +97,28 @@ afterEach(() => {
 })
 
 describe("OpenABTransport", () => {
+  it("reports the remote OpenAB agent as installed", async () => {
+    const transport = new OpenABTransport({
+      baseUrl: "https://openab.test",
+      token: "admin-token",
+      profileId: "codex-default",
+      fetchImpl: vi.fn() as unknown as typeof fetch,
+      storage: new MemoryStorage(),
+    })
+
+    const agents =
+      await transport.call<Array<{ installed_version: string }>>(
+        "acp_list_agents"
+      )
+    const status = await transport.call<{ installed_version: string }>(
+      "acp_get_agent_status"
+    )
+
+    expect(agents[0].installed_version).toBe("0.9.15")
+    expect(status.installed_version).toBe("0.9.15")
+    transport.destroy()
+  })
+
   it("keeps opaque session IDs in external_id and persists local numeric IDs", async () => {
     const storage = new MemoryStorage()
     const firstFetch = vi.fn(async () =>

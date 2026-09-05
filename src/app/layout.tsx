@@ -59,27 +59,27 @@ export default async function RootLayout({
           locale={initialLocale}
           messages={initialMessages}
         >
-          <AppI18nProvider
-            initialLocale={initialLocale}
-            initialMessages={initialMessages}
-          >
-            <ThemeProvider
-              attribute="class"
-              defaultTheme="system"
-              enableSystem
-              disableTransitionOnChange
+          <OpenABTransportProvider>
+            <AppI18nProvider
+              initialLocale={initialLocale}
+              initialMessages={initialMessages}
             >
-              <AppearanceProvider>
-                <OpenABTransportProvider>
+              <ThemeProvider
+                attribute="class"
+                defaultTheme="system"
+                enableSystem
+                disableTransitionOnChange
+              >
+                <AppearanceProvider>
                   <OverlayScrollbarsInit />
                   <ClipboardFallbackInit />
                   <WebConnectionGuard />
                   <WindowResizeGrips />
                   {children}
-                </OpenABTransportProvider>
-              </AppearanceProvider>
-            </ThemeProvider>
-          </AppI18nProvider>
+                </AppearanceProvider>
+              </ThemeProvider>
+            </AppI18nProvider>
+          </OpenABTransportProvider>
         </NextIntlClientProvider>
       </body>
     </html>
