@@ -212,7 +212,10 @@ export function CommandDropdown() {
     [clearLink]
   )
 
-  const commandList = Array.isArray(commands) ? commands : []
+  const commandList = useMemo(
+    () => (Array.isArray(commands) ? commands : []),
+    [commands]
+  )
   const activeCmd = useMemo(
     () =>
       commandList.find((c) => c.id === selectedCommandId) ?? commandList[0] ?? null,
