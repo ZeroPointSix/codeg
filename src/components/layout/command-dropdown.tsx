@@ -218,7 +218,9 @@ export function CommandDropdown() {
   )
   const activeCmd = useMemo(
     () =>
-      commandList.find((c) => c.id === selectedCommandId) ?? commandList[0] ?? null,
+      commandList.find((c) => c.id === selectedCommandId) ??
+      commandList[0] ??
+      null,
     [commandList, selectedCommandId]
   )
   const activeTerminalId = activeCmd
