@@ -125,6 +125,7 @@ import {
   RECENT_PAGE_SIZE,
   reuseSelected,
   reuseSet,
+  isHiddenByCompletedFilter,
   selectChatConversationsWithReuse,
   selectPinnedWithReuse,
   selectRecentConversationsWithReuse,
@@ -1301,7 +1302,7 @@ export function SidebarConversationList({
       (c) => c.pinned_at == null && c.kind !== "chat"
     )
     if (showCompleted) return base
-    return base.filter((c) => c.status !== "completed")
+    return base.filter((c) => !isHiddenByCompletedFilter(c, false))
   }, [conversations, showCompleted])
 
   // Flat "Chat" bucket: folderless chat-mode conversations, most-recently-updated

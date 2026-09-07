@@ -16,6 +16,7 @@ import {
   RECENT_PAGE_SIZE,
   reuseSelected,
   reuseSet,
+  isHiddenByCompletedFilter,
   selectChatConversationsWithReuse,
   selectPinnedWithReuse,
   selectRecentConversationsWithReuse,
@@ -1313,6 +1314,25 @@ describe("selectChatConversationsWithReuse", () => {
     ).toEqual([1, 2])
   })
 
+  it("keeps completed OpenAB chats visible when showCompleted is off", () => {
+    const doneOpenAB = conv(1, 99, {
+      kind: "chat",
+      status: "completed",
+      agent_type: "openab",
+    })
+    const doneLocal = conv(2, 99, { kind: "chat", status: "completed" })
+    const active = conv(3, 99, { kind: "chat" })
+    expect(
+      selectChatConversationsWithReuse(
+        [doneOpenAB, doneLocal, active],
+        false,
+        []
+      ).map((c) => c.id)
+    ).toEqual([3, 1])
+    expect(isHiddenByCompletedFilter(doneOpenAB, false)).toBe(false)
+    expect(isHiddenByCompletedFilter(doneLocal, false)).toBe(true)
+  })
+
   it("returns the prev array when membership is referentially unchanged", () => {
     const a = conv(1, 99, { kind: "chat" })
     const first = selectChatConversationsWithReuse([a], true, [])
@@ -1377,6 +1397,25 @@ describe("selectRecentConversationsWithReuse", () => {
         []
       ).map((c) => c.id)
     ).toEqual([2, 1])
+  })
+
+  it("keeps completed OpenAB chats visible when showCompleted is off", () => {
+    const doneOpenAB = conv(1, 99, {
+      kind: "chat",
+      status: "completed",
+      agent_type: "openab",
+    })
+    const doneFolder = conv(2, 10, { status: "completed" })
+    const active = conv(3, 10)
+    expect(
+      selectRecentConversationsWithReuse(
+        [doneOpenAB, doneFolder, active],
+        false,
+        "created",
+        open,
+        []
+      ).map((c) => c.id)
+    ).toEqual([3, 1])
   })
 
   it("sorts by the active sort mode so the order matches each card's label", () => {

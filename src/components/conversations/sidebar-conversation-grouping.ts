@@ -249,13 +249,32 @@ export function selectPinnedWithReuse(
 }
 
 /**
+ * Whether a row should drop out of Chat / Recent / Folders when "Show
+ * completed" is off.
+ *
+ * Hosted OpenAB sessions stay resumable. Codeg's `completed` status means the
+ * user archived the conversation, but OpenAB idle used to be mapped to
+ * `completed`, which emptied Chat/Recent while the footer still counted every
+ * server session. Keep `agent_type === "openab"` visible even if a snapshot
+ * still carries that status.
+ */
+export function isHiddenByCompletedFilter(
+  conv: Pick<DbConversationSummary, "status" | "agent_type">,
+  showCompleted: boolean
+): boolean {
+  if (showCompleted || conv.status !== "completed") return false
+  return conv.agent_type !== "openab"
+}
+
+/**
  * Select the folderless "chat mode" conversations (`kind === "chat"`) for the
  * flat "Chat" sidebar section. Sorted most-recently-updated first, with
  * reference reuse (same motivation as {@link selectPinnedWithReuse}).
  *
  * Excludes pinned conversations (they surface in the Pinned section, an explicit
  * override) and — unless `showCompleted` — completed ones, matching how
- * `folderConversations` is filtered for the folders section.
+ * `folderConversations` is filtered for the folders section. Hosted OpenAB
+ * sessions are an exception; see {@link isHiddenByCompletedFilter}.
  *
  * `prev` is the array returned last call (threaded via a ref by the caller).
  */
@@ -268,7 +287,7 @@ export function selectChatConversationsWithReuse(
   for (const conv of conversations) {
     if (conv.pinned_at != null) continue
     if (conv.kind !== "chat") continue
-    if (!showCompleted && conv.status === "completed") continue
+    if (isHiddenByCompletedFilter(conv, showCompleted)) continue
     next.push(conv)
   }
   next.sort(compareByUpdatedAtDesc)
@@ -285,7 +304,9 @@ export function selectChatConversationsWithReuse(
  * - Pinned conversations are excluded. They already have a dedicated top
  *   section, and a Recent copy would be a second row for the same conversation
  *   two sections apart.
- * - Completed ones follow `showCompleted`, like every other section.
+ * - Completed ones follow `showCompleted`, like every other section, except
+ *   hosted OpenAB sessions which stay visible (see
+ *   {@link isHiddenByCompletedFilter}).
  * - A folder conversation is included only when its folder is OPEN
  *   (`openFolderIds`). `list_all_conversations` returns rows for every
  *   non-deleted folder — open or not — and the Folders section silently drops
@@ -309,7 +330,7 @@ export function selectRecentConversationsWithReuse(
   const next: DbConversationSummary[] = []
   for (const conv of conversations) {
     if (conv.pinned_at != null) continue
-    if (!showCompleted && conv.status === "completed") continue
+    if (isHiddenByCompletedFilter(conv, showCompleted)) continue
     if (conv.kind !== "chat" && !openFolderIds.has(conv.folder_id)) continue
     next.push(conv)
   }

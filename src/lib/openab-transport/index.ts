@@ -718,10 +718,11 @@ export class OpenABTransport implements Transport {
     options?: CallOptions
   ): Promise<OpenedTabsSnapshot> {
     const current = this.readOpenedTabs()
-    if (
-      current.items.length > 0 ||
-      this.storage?.getItem(this.openedTabsKey) !== null
-    ) {
+    // Restore whenever nothing is open. A stored `{ items: [] }` is how a
+    // previous "New Conversation" landing looks after save — treating that as
+    // "already decided" left login/refresh on a blank composer while the
+    // footer still counted every server session.
+    if (current.items.length > 0) {
       return current
     }
 
