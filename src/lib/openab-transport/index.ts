@@ -181,7 +181,7 @@ export class OpenABTransport implements Transport {
           short_sha: null,
         } satisfies GitHeadInfo as T
       case "list_opened_tabs":
-        return this.readOpenedTabs() as T
+        return (await this.loadOpenedTabs(options)) as T
       case "save_opened_tabs":
         return this.saveOpenedTabs(args) as T
       case "create_chat_dir":
@@ -712,6 +712,46 @@ export class OpenABTransport implements Transport {
       ),
     }
     this.storage.setItem(this.identityKey, JSON.stringify(state))
+  }
+
+  private async loadOpenedTabs(
+    options?: CallOptions
+  ): Promise<OpenedTabsSnapshot> {
+    const current = this.readOpenedTabs()
+    if (
+      current.items.length > 0 ||
+      this.storage?.getItem(this.openedTabsKey) !== null
+    ) {
+      return current
+    }
+
+    const sessions = await this.listSessions(options)
+    const latest = sessions.reduce<OpenABSessionSnapshot | null>(
+      (newest, session) =>
+        newest == null ||
+        new Date(session.updated_at).getTime() >
+          new Date(newest.updated_at).getTime()
+          ? session
+          : newest,
+      null
+    )
+    if (!latest) return current
+
+    const conversationId = this.conversationIdForSession(latest.session_id)
+    return {
+      version: current.version,
+      items: [
+        {
+          id: conversationId,
+          folder_id: OPENAB_FOLDER_ID,
+          conversation_id: conversationId,
+          agent_type: OPENAB_AGENT_TYPE,
+          position: 0,
+          is_active: true,
+          is_pinned: false,
+        },
+      ],
+    }
   }
 
   private readOpenedTabs(): OpenedTabsSnapshot {
