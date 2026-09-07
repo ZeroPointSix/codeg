@@ -137,6 +137,7 @@ describe("OpenABTransport", () => {
     )
     expect(initial[0].id).toBeTypeOf("number")
     expect(initial[0].external_id).toBe("admin:fixture-session")
+    expect(initial[0].status).toBe("in_progress")
     const stableId = initial[0].id
     first.destroy()
 
@@ -159,6 +160,51 @@ describe("OpenABTransport", () => {
     ).toBe(stableId)
     expect(new Set(restored.map((item) => item.id)).size).toBe(2)
     second.destroy()
+  })
+
+  it("restores the latest server conversation when local tab state is absent", async () => {
+    const storage = new MemoryStorage()
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith("/api/v1/sessions")) {
+        return json([
+          session("admin:older-session"),
+          {
+            ...session("admin:latest-session"),
+            updated_at: "2026-09-03T00:02:00Z",
+          },
+        ])
+      }
+      if (url.endsWith("/transcript")) {
+        return json(transcript("admin:latest-session"))
+      }
+      return json(session("admin:latest-session"))
+    }) as unknown as typeof fetch
+    const transport = new OpenABTransport({
+      baseUrl: "https://openab.test",
+      token: "admin-token",
+      profileId: "codex-default",
+      fetchImpl,
+      storage,
+    })
+
+    const tabs = await transport.call<{
+      items: Array<{ conversation_id: number | null; is_active: boolean }>
+      version: number
+    }>("list_opened_tabs")
+    expect(tabs.items).toHaveLength(1)
+    expect(tabs.items[0]).toMatchObject({ is_active: true })
+
+    const detail = await transport.call<DbConversationDetail>(
+      "get_folder_conversation",
+      { conversationId: tabs.items[0].conversation_id }
+    )
+    expect(detail.summary.external_id).toBe("admin:latest-session")
+    expect(detail.turns[1].blocks).toContainEqual({
+      type: "text",
+      text: "Done",
+    })
+    transport.destroy()
   })
 
   it("isolates mappings and opened tabs per OpenAB target when session_id is 1", async () => {
@@ -240,7 +286,8 @@ describe("OpenABTransport", () => {
       version: number
     }>("list_opened_tabs")
     expect(betaTabs.version).toBe(0)
-    expect(betaTabs.items).toEqual([])
+    expect(betaTabs.items).toHaveLength(1)
+    expect(betaTabs.items[0]?.conversation_id).toBe(1)
     const betaDetail = await beta.call<DbConversationDetail>(
       "get_folder_conversation",
       { conversationId: 1 }
@@ -278,7 +325,8 @@ describe("OpenABTransport", () => {
       items: unknown[]
       version: number
     }>("list_opened_tabs")
-    expect(otherTabs.items).toEqual([])
+    expect(otherTabs.version).toBe(0)
+    expect(otherTabs.items).toHaveLength(1)
     otherProfile.destroy()
   })
 

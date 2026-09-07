@@ -78,6 +78,13 @@ describe("OpenAB adapters", () => {
     expect(summary.external_id).toBe(session.session_id)
   })
 
+  it("keeps idle OpenAB sessions visible as resumable conversations", () => {
+    const summary = toConversationSummary({ ...session, status: "idle" }, 42)
+
+    expect(summary.status).toBe("in_progress")
+    expect(summary.kind).toBe("chat")
+  })
+
   it("keeps only the latest revision of each transcript entry", () => {
     expect(latestTranscriptEntries(transcript())).toMatchObject([
       { entry_id: "assistant-1", sequence: 4, content: "new" },
