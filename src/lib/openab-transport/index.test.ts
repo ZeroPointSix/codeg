@@ -6,6 +6,7 @@ import type {
 } from "@/lib/types"
 import { OpenABEventStream, parseSseChunk } from "./event-stream"
 import { OpenABTransport } from "./index"
+import { openABOpenedTabsStorageKey } from "./storage-keys"
 import type {
   OpenABSessionSnapshot,
   OpenABSseEvent,
@@ -204,6 +205,52 @@ describe("OpenABTransport", () => {
       type: "text",
       text: "Done",
     })
+    transport.destroy()
+  })
+
+  it("restores the latest server conversation when stored tabs are empty", async () => {
+    const storage = new MemoryStorage()
+    storage.setItem(
+      openABOpenedTabsStorageKey("https://openab.test", "codex-default"),
+      JSON.stringify({ version: 4, items: [] })
+    )
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith("/api/v1/sessions")) {
+        return json([
+          session("admin:older-session"),
+          {
+            ...session("admin:latest-session"),
+            updated_at: "2026-09-03T00:02:00Z",
+          },
+        ])
+      }
+      if (url.endsWith("/transcript")) {
+        return json(transcript("admin:latest-session"))
+      }
+      return json(session("admin:latest-session"))
+    }) as unknown as typeof fetch
+    const transport = new OpenABTransport({
+      baseUrl: "https://openab.test",
+      token: "admin-token",
+      profileId: "codex-default",
+      fetchImpl,
+      storage,
+    })
+
+    const tabs = await transport.call<{
+      items: Array<{ conversation_id: number | null; is_active: boolean }>
+      version: number
+    }>("list_opened_tabs")
+    expect(tabs.version).toBe(4)
+    expect(tabs.items).toHaveLength(1)
+    expect(tabs.items[0]).toMatchObject({ is_active: true })
+
+    const detail = await transport.call<DbConversationDetail>(
+      "get_folder_conversation",
+      { conversationId: tabs.items[0].conversation_id }
+    )
+    expect(detail.summary.external_id).toBe("admin:latest-session")
     transport.destroy()
   })
 
