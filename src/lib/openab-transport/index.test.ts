@@ -200,7 +200,10 @@ describe("OpenABTransport", () => {
       { conversationId: tabs.items[0].conversation_id }
     )
     expect(detail.summary.external_id).toBe("admin:latest-session")
-    expect(detail.turns.map((turn) => turn.text)).toContain("Done")
+    expect(detail.turns[1].blocks).toContainEqual({
+      type: "text",
+      text: "Done",
+    })
     transport.destroy()
   })
 
