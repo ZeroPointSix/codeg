@@ -200,12 +200,12 @@ export function toConversationSummary(
     title: session.title ?? session.profile_name ?? session.session_id,
     title_locked: false,
     agent_type: "openab",
+    // OpenAB idle sessions remain resumable. Codeg's completed status means the
+    // user archived the conversation and hides it from the sidebar by default.
     status:
       session.status === "error" || session.status === "failed"
         ? "cancelled"
-        : mapOpenABStatus(session.status) === "prompting"
-          ? "in_progress"
-          : "completed",
+        : "in_progress",
     kind: "chat",
     model: session.model,
     git_branch: null,
