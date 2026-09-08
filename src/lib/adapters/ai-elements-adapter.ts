@@ -1332,6 +1332,69 @@ function adaptImageToolResultParts(
 }
 
 /**
+ * Bundle every reasoning fragment in one rendered assistant scope into a
+ * single disclosure block. Agents may emit a fresh thinking block after each
+ * tool call, and consecutive assistant sub-rounds are later concatenated into
+ * the same scope. Rendering those fragments independently produces a stack of
+ * identical brain-icon rows instead of one coherent thought.
+ *
+ * The bundle occupies the first reasoning slot while every non-reasoning part
+ * keeps its relative order. Goal runs are separate nested scopes: merge their
+ * children recursively without pulling their reasoning outside the goal card.
+ * Invoke this at the render boundary, after progress and final-answer content
+ * have been split. Running it earlier would move later reasoning ahead of
+ * intermediate commentary and could make that commentary look like part of
+ * the final answer.
+ *
+ * Return the original array when nothing changes so the message and merged-run
+ * caches keep their reference-stability guarantees.
+ */
+export function mergeReasoningParts(
+  parts: AdaptedContentPart[]
+): AdaptedContentPart[] {
+  let nestedChanged = false
+  const normalized = parts.map((part) => {
+    if (part.type !== "goal-run") return part
+    const items = mergeReasoningParts(part.items)
+    if (items === part.items) return part
+    nestedChanged = true
+    return { ...part, items }
+  })
+
+  const reasoningParts = normalized.filter(
+    (part): part is Extract<AdaptedContentPart, { type: "reasoning" }> =>
+      part.type === "reasoning"
+  )
+  if (reasoningParts.length <= 1) {
+    return nestedChanged ? normalized : parts
+  }
+
+  const content = reasoningParts
+    .map((part) => part.content)
+    .filter((part) => part.trim().length > 0)
+    .join("\n\n")
+  const merged: Extract<AdaptedContentPart, { type: "reasoning" }> = {
+    type: "reasoning",
+    content,
+    isStreaming: reasoningParts.some((part) => part.isStreaming),
+  }
+
+  const result: AdaptedContentPart[] = []
+  let inserted = false
+  for (const part of normalized) {
+    if (part.type !== "reasoning") {
+      result.push(part)
+      continue
+    }
+    if (!inserted) {
+      result.push(merged)
+      inserted = true
+    }
+  }
+  return result
+}
+
+/**
  * Merge adjacent tool-group parts in a parts array into a single tool-group.
  * Used for cross-turn merging when concatenated content from consecutive
  * assistant turns lands two tool-groups next to each other.

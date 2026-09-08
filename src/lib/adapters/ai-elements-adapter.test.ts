@@ -10,6 +10,7 @@ import {
   groupGoalRuns,
   groupConsecutiveToolCalls,
   mergeAdjacentDelegationStatusGroups,
+  mergeReasoningParts,
   type AdaptedContentPart,
   type AdaptedToolCallPart,
 } from "./ai-elements-adapter"
@@ -39,6 +40,80 @@ function goalRunOf(part: AdaptedContentPart) {
   }
   return part
 }
+
+function reasoning(content: string, isStreaming = false): AdaptedContentPart {
+  return { type: "reasoning", content, isStreaming }
+}
+
+describe("mergeReasoningParts", () => {
+  it("bundles a turn's reasoning around other work into the first slot", () => {
+    const tool = poll("exec_command")
+    const out = mergeReasoningParts([
+      reasoning("Inspect the request"),
+      tool,
+      reasoning("Check the result", true),
+      text,
+    ])
+
+    expect(out.map((part) => part.type)).toEqual([
+      "reasoning",
+      "tool-call",
+      "text",
+    ])
+    expect(out[0]).toEqual({
+      type: "reasoning",
+      content: "Inspect the request\n\nCheck the result",
+      isStreaming: true,
+    })
+    expect(out[1]).toBe(tool)
+    expect(out[2]).toBe(text)
+  })
+
+  it("keeps the input reference when no bundle is needed", () => {
+    const parts = [reasoning("One thought"), text]
+    expect(mergeReasoningParts(parts)).toBe(parts)
+  })
+
+  it("ignores empty fragments without losing a live thinking indicator", () => {
+    expect(
+      mergeReasoningParts([
+        reasoning(""),
+        reasoning("Meaningful thought"),
+        reasoning("", true),
+      ])
+    ).toEqual([
+      {
+        type: "reasoning",
+        content: "Meaningful thought",
+        isStreaming: true,
+      },
+    ])
+  })
+
+  it("merges reasoning inside a goal without moving it outside the card", () => {
+    const start = poll("create_goal")
+    const goal: AdaptedContentPart = {
+      type: "goal-run",
+      start,
+      end: null,
+      items: [
+        reasoning("First goal thought"),
+        poll("exec_command"),
+        reasoning("Second goal thought"),
+      ],
+      isRunning: true,
+    }
+
+    const out = mergeReasoningParts([goal, reasoning("Outer thought")])
+
+    expect(out).toHaveLength(2)
+    expect(out[1]).toEqual(reasoning("Outer thought"))
+    expect(goalRunOf(out[0]).items).toEqual([
+      reasoning("First goal thought\n\nSecond goal thought"),
+      poll("exec_command"),
+    ])
+  })
+})
 
 describe("groupConsecutiveDelegationStatus", () => {
   it("wraps a run of consecutive status polls into one group", () => {
