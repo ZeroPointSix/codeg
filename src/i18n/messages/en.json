@@ -1901,7 +1901,8 @@
       "updatedAt": "Updated",
       "none": "—",
       "copyField": "Copy {field}",
-      "copiedField": "Copied {field}"
+      "copiedField": "Copied {field}",
+      "openabUsageUnavailable": "OpenAB has not reported token usage. Output speed is a local estimate, not a billed token count."
     },
     "conversationCard": {
       "untitledConversation": "Untitled conversation",
@@ -3081,7 +3082,9 @@
       "reasoning": {
         "thinking": "Thinking…",
         "thoughtForFewSeconds": "Thought",
-        "thoughtForSeconds": "Thought"
+        "thoughtForSeconds": "Thought",
+        "clear": "Clear display",
+        "clearHint": "Clear this reasoning from the current view only; the remote transcript is not deleted."
       },
       "mermaid": {
         "diagram": "Diagram",

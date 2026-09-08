@@ -1901,7 +1901,8 @@
       "updatedAt": "Aktualisiert",
       "none": "—",
       "copyField": "{field} kopieren",
-      "copiedField": "{field} kopiert"
+      "copiedField": "{field} kopiert",
+      "openabUsageUnavailable": "OpenAB hat keine Token-Nutzung gemeldet. Die Ausgabegeschwindigkeit ist eine lokale Schätzung, keine abrechenbare Token-Anzahl."
     },
     "conversationCard": {
       "untitledConversation": "Unbenannte Konversation",
@@ -3081,7 +3082,9 @@
       "reasoning": {
         "thinking": "Denkt nach…",
         "thoughtForFewSeconds": "Nachgedacht",
-        "thoughtForSeconds": "Nachgedacht"
+        "thoughtForSeconds": "Nachgedacht",
+        "clear": "Anzeige leeren",
+        "clearHint": "Nur aus der aktuellen Ansicht entfernen; das entfernte Protokoll bleibt erhalten."
       },
       "mermaid": {
         "diagram": "Diagramm",
