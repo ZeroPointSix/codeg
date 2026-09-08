@@ -1901,7 +1901,8 @@
       "updatedAt": "更新日時",
       "none": "—",
       "copyField": "{field}をコピー",
-      "copiedField": "{field}をコピーしました"
+      "copiedField": "{field}をコピーしました",
+      "openabUsageUnavailable": "OpenAB はトークン使用量を提供していません。出力速度はローカルの推定値であり、課金対象のトークン数ではありません。"
     },
     "conversationCard": {
       "untitledConversation": "無題の会話",
@@ -3081,7 +3082,9 @@
       "reasoning": {
         "thinking": "考え中…",
         "thoughtForFewSeconds": "考えた",
-        "thoughtForSeconds": "考えた"
+        "thoughtForSeconds": "考えた",
+        "clear": "表示を消去",
+        "clearHint": "現在の画面からのみ消去します。リモートの記録は削除されません。"
       },
       "mermaid": {
         "diagram": "図",
