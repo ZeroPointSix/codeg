@@ -1,11 +1,13 @@
 "use client"
 
 import { useTerminalContext } from "@/contexts/terminal-context"
+import { isOpenABMode } from "@/lib/transport"
 import { TerminalTabBar } from "./terminal-tab-bar"
 import { TerminalView } from "./terminal-view"
 
 export function TerminalPanel() {
   const { isOpen, tabs, activeTabId, markTerminalExited } = useTerminalContext()
+  if (isOpenABMode()) return null
 
   return (
     <section
