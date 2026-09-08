@@ -404,6 +404,8 @@ export class OpenABTransport implements Transport {
         this.notifyConversationStatus(sessionId, data.snapshot.status)
       } else if (frame.event === "error") {
         this.notifyConversationStatus(sessionId, "error")
+      } else if (frame.event === "exited") {
+        this.notifyConversationStatus(sessionId, "exited")
       }
     })
     return () => {

@@ -132,8 +132,11 @@ describe("OpenAB lifecycle delivery", () => {
       "prompting"
     )
     expect(h.handlers.onSnapshot.mock.lastCall?.[0].live_message).toBeNull()
-    if (status === "failed" || status === "error")
-      expect(h.handlers.onEvent.mock.lastCall?.[0].type).toBe("error")
+    if (status === "failed" || status === "error") {
+      expect(
+        h.handlers.onEvent.mock.calls.map(([event]) => event.type)
+      ).toEqual(["error", "turn_complete"])
+    }
   })
 
   it("deduplicates within a wire generation but accepts a lower sequence after restart", async () => {

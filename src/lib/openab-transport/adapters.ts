@@ -118,6 +118,39 @@ function transcriptEntryFromPayload(
   }
 }
 
+function isAssistantThinking(entry: OpenABTranscriptEntry): boolean {
+  return entry.role === "assistant" && entry.status === "thinking"
+}
+
+function appendThinkingDelta(
+  current: LiveMessage | null,
+  entry: OpenABTranscriptEntry
+): LiveMessage | null {
+  const startedAt =
+    current?.started_at ?? entry.timestamp ?? new Date().toISOString()
+  const content = current?.content ?? []
+  const last = content[content.length - 1]
+  if (last?.kind === "thinking") {
+    if (!entry.content) return current
+    return {
+      id: current?.id ?? entry.entry_id,
+      role: "assistant",
+      started_at: startedAt,
+      content: [
+        ...content.slice(0, -1),
+        { kind: "thinking", text: last.text + entry.content },
+      ],
+    }
+  }
+  if (!hasMeaningfulThinking(entry.content)) return current
+  return {
+    id: current?.id ?? entry.entry_id,
+    role: "assistant",
+    started_at: startedAt,
+    content: [...content, { kind: "thinking", text: entry.content }],
+  }
+}
+
 function patchSnapshotFromEntry(
   current: LiveSessionSnapshot,
   entry: OpenABTranscriptEntry,
@@ -125,14 +158,25 @@ function patchSnapshotFromEntry(
 ): LiveSessionSnapshot {
   let liveMessage = current.live_message
   let activeToolCalls = current.active_tool_calls
-  if (entry.role === "assistant" || entry.role === "system") {
+  if (isAssistantThinking(entry)) {
+    liveMessage = appendThinkingDelta(liveMessage, entry)
+  } else if (entry.role === "assistant" || entry.role === "system") {
     const nextLive = latestLiveMessage([
       entry.status === "completed" && entry.role === "assistant"
         ? { ...entry, status: "streaming" }
         : entry,
     ])
-    if (nextLive) liveMessage = nextLive
-    else if (liveMessage?.id === entry.entry_id) liveMessage = null
+    if (nextLive) {
+      const thinking = (liveMessage?.content ?? []).filter(
+        (block) => block.kind === "thinking"
+      )
+      liveMessage = {
+        ...nextLive,
+        id: nextLive.id,
+        started_at: liveMessage?.started_at ?? nextLive.started_at,
+        content: [...thinking, ...nextLive.content],
+      }
+    } else if (liveMessage?.id === entry.entry_id) liveMessage = null
   }
   if (entry.role === "tool") {
     const tool = toToolCallState(entry)
@@ -206,6 +250,16 @@ export function applyOpenABSseToSnapshot(
       live_message: null,
       active_tool_calls: [],
       last_error: lastError ?? current.last_error,
+      event_seq: eventSeq,
+    }
+  }
+
+  if (event.event === "exited") {
+    return {
+      ...current,
+      status: "disconnected",
+      live_message: null,
+      active_tool_calls: [],
       event_seq: eventSeq,
     }
   }
@@ -322,20 +376,70 @@ function entryBlocks(entry: OpenABTranscriptEntry): ContentBlock[] {
   return blocks
 }
 
+function thinkingBlock(text: string): ContentBlock | null {
+  return hasMeaningfulThinking(text) ? { type: "thinking", text } : null
+}
+
+/**
+ * OpenAB streams each reasoning token as its own transcript entry. Native
+ * Codeg and ChatGPT keep one bundled thought on the assistant turn.
+ */
 export function transcriptToTurns(
   transcript: OpenABTranscriptSnapshot
 ): MessageTurn[] {
-  return latestTranscriptEntries(transcript)
-    .filter(
-      (entry) =>
-        entry.status !== "thinking" || hasMeaningfulThinking(entry.content)
-    )
-    .map((entry) => ({
+  const turns: MessageTurn[] = []
+  let pending: { id: string; timestamp: string; text: string } | null = null
+
+  const pushThinkingTurn = () => {
+    if (!pending) return
+    const block = thinkingBlock(pending.text)
+    if (block) {
+      turns.push({
+        id: pending.id,
+        role: "assistant",
+        blocks: [block],
+        timestamp: pending.timestamp,
+      })
+    }
+    pending = null
+  }
+
+  for (const entry of latestTranscriptEntries(transcript)) {
+    if (isAssistantThinking(entry)) {
+      if (!pending) {
+        pending = {
+          id: entry.entry_id,
+          timestamp: entry.timestamp ?? new Date(0).toISOString(),
+          text: "",
+        }
+      }
+      pending.text += entry.content
+      continue
+    }
+
+    if (entry.role === "assistant") {
+      const thinking = pending ? thinkingBlock(pending.text) : null
+      pending = null
+      turns.push({
+        id: entry.entry_id,
+        role: "assistant",
+        blocks: [...(thinking ? [thinking] : []), ...entryBlocks(entry)],
+        timestamp: entry.timestamp ?? new Date(0).toISOString(),
+      })
+      continue
+    }
+
+    pushThinkingTurn()
+    turns.push({
       id: entry.entry_id,
       role: entry.role === "tool" ? "assistant" : entry.role,
       blocks: entryBlocks(entry),
       timestamp: entry.timestamp ?? new Date(0).toISOString(),
-    }))
+    })
+  }
+
+  pushThinkingTurn()
+  return turns
 }
 
 function toToolCallState(entry: OpenABTranscriptEntry): ToolCallState {
@@ -362,25 +466,40 @@ function toToolCallState(entry: OpenABTranscriptEntry): ToolCallState {
 function latestLiveMessage(
   entries: OpenABTranscriptEntry[]
 ): LiveMessage | null {
-  const entry = [...entries]
-    .reverse()
-    .find(
-      (candidate) =>
-        candidate.role === "assistant" &&
-        (candidate.status === "streaming" ||
-          (candidate.status === "thinking" &&
-            hasMeaningfulThinking(candidate.content)))
-    )
-  if (!entry) return null
+  let end = -1
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]
+    if (
+      entry.role === "assistant" &&
+      (entry.status === "streaming" || isAssistantThinking(entry))
+    ) {
+      end = i
+      break
+    }
+  }
+  if (end < 0) return null
+  let start = end
+  while (start > 0 && isAssistantThinking(entries[start - 1])) start -= 1
+  const slice = entries.slice(start, end + 1)
+  const thinkingText = slice
+    .filter(isAssistantThinking)
+    .map((entry) => entry.content)
+    .join("")
+  const textEntry = slice.find(
+    (entry) => entry.role === "assistant" && entry.status !== "thinking"
+  )
+  const content: LiveMessage["content"] = []
+  if (hasMeaningfulThinking(thinkingText)) {
+    content.push({ kind: "thinking", text: thinkingText })
+  }
+  if (textEntry) content.push({ kind: "text", text: textEntry.content })
+  if (content.length === 0) return null
+  const last = slice[slice.length - 1]
   return {
-    id: entry.entry_id,
+    id: last.entry_id,
     role: "assistant",
-    content: [
-      entry.status === "thinking"
-        ? { kind: "thinking", text: entry.content }
-        : { kind: "text", text: entry.content },
-    ],
-    started_at: entry.timestamp ?? new Date().toISOString(),
+    content,
+    started_at: slice[0].timestamp ?? new Date().toISOString(),
   }
 }
 

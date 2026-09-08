@@ -97,12 +97,35 @@ function isRecoveryEvent(event: OpenABSseEvent): boolean {
   )
 }
 
-function lifecycleEnvelope(
+function turnCompleteEnvelope(
+  connectionId: string,
+  seq: number,
+  stopReason: "cancelled" | "end_turn" = "end_turn"
+): EventEnvelope {
+  return {
+    seq,
+    connection_id: connectionId,
+    type: "turn_complete",
+    session_id: connectionId,
+    stop_reason: stopReason,
+  }
+}
+
+function isClientStreamStall(code: string | null | undefined): boolean {
+  return code === "stream_stalled"
+}
+
+function lifecycleEnvelopes(
   event: OpenABSseEvent,
   connectionId: string,
   seq: number
-): EventEnvelope | null {
-  if (!event.data || typeof event.data !== "object") return null
+): EventEnvelope[] {
+  if (!event.data || typeof event.data !== "object") {
+    if (event.event === "exited") {
+      return [turnCompleteEnvelope(connectionId, seq, "cancelled")]
+    }
+    return []
+  }
   const data = event.data as {
     snapshot?: { status?: unknown; last_error?: unknown }
     error?: unknown
@@ -115,8 +138,8 @@ function lifecycleEnvelope(
       mapOpenABLastError(data.last_error) ?? mapOpenABLastError(data.error)
     const message =
       lastError?.message ?? (typeof data.error === "string" ? data.error : null)
-    if (!message) return null
-    return {
+    if (!message) return []
+    const errorEnvelope: EventEnvelope = {
       seq,
       connection_id: connectionId,
       type: "error",
@@ -128,13 +151,17 @@ function lifecycleEnvelope(
         lastError?.details ??
         (typeof data.details === "string" ? data.details : null),
     }
+    if (isClientStreamStall(errorEnvelope.code)) return [errorEnvelope]
+    return [errorEnvelope, turnCompleteEnvelope(connectionId, seq)]
+  }
+  if (event.event === "exited") {
+    return [turnCompleteEnvelope(connectionId, seq, "cancelled")]
   }
   const status = data.snapshot?.status
-  if (event.event !== "status_changed" || typeof status !== "string")
-    return null
+  if (event.event !== "status_changed" || typeof status !== "string") return []
   if (status === "error" || status === "failed") {
     const lastError = mapOpenABLastError(data.snapshot?.last_error)
-    return {
+    const errorEnvelope: EventEnvelope = {
       seq,
       connection_id: connectionId,
       type: "error",
@@ -143,22 +170,35 @@ function lifecycleEnvelope(
       code: lastError?.code ?? null,
       details: lastError?.details ?? null,
     }
+    if (isClientStreamStall(errorEnvelope.code)) return [errorEnvelope]
+    return [errorEnvelope, turnCompleteEnvelope(connectionId, seq)]
   }
-  if (["idle", "connected", "completed", "cancelled"].includes(status)) {
-    return {
+  if (
+    [
+      "idle",
+      "connected",
+      "completed",
+      "cancelled",
+      "exited",
+      "disconnected",
+    ].includes(status)
+  ) {
+    return [
+      turnCompleteEnvelope(
+        connectionId,
+        seq,
+        status === "cancelled" || status === "exited" ? "cancelled" : "end_turn"
+      ),
+    ]
+  }
+  return [
+    {
       seq,
       connection_id: connectionId,
-      type: "turn_complete",
-      session_id: connectionId,
-      stop_reason: status === "cancelled" ? "cancelled" : "end_turn",
-    }
-  }
-  return {
-    seq,
-    connection_id: connectionId,
-    type: "status_changed",
-    status: mapOpenABStatus(status),
-  }
+      type: "status_changed",
+      status: mapOpenABStatus(status),
+    },
+  ]
 }
 
 function progressFingerprint(snapshot: LiveSessionSnapshot): string {
@@ -280,17 +320,17 @@ export class OpenABEventStream implements EventStream {
         snapshot: { status: snapshot.status, last_error: snapshot.last_error },
       },
     }
-    const envelope = previous
-      ? lifecycleEnvelope(boundary, subscription.connectionId, 0)
-      : null
-    if (
-      envelope &&
-      (envelope.type === "turn_complete"
-        ? previous?.status === "prompting"
-        : previous?.status !== snapshot.status ||
-          JSON.stringify(previous?.last_error) !==
-            JSON.stringify(snapshot.last_error))
-    ) {
+    const envelopes = previous
+      ? lifecycleEnvelopes(boundary, subscription.connectionId, 0)
+      : []
+    for (const envelope of envelopes) {
+      const shouldPublish =
+        envelope.type === "turn_complete"
+          ? previous?.status === "prompting"
+          : previous?.status !== snapshot.status ||
+            JSON.stringify(previous?.last_error) !==
+              JSON.stringify(snapshot.last_error)
+      if (!shouldPublish) continue
       subscription.handlers.onEvent({
         ...envelope,
         seq: this.nextSequence(subscription.connectionId),
