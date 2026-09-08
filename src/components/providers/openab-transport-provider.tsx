@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, type ReactNode } from "react"
-import { Loader2, LogOut, RefreshCw } from "lucide-react"
+import { Loader2 } from "lucide-react"
 import { usePathname, useRouter } from "next/navigation"
 import { isDesktop } from "@/lib/platform"
 import { clearOpenABTransport, configureOpenABTransport } from "@/lib/transport"
@@ -37,7 +37,10 @@ export function OpenABTransportProvider({ children }: { children: ReactNode }) {
 
     const token = localStorage.getItem("codeg_token")
     if (!token) {
-      if (pathname.startsWith("/workspace")) {
+      if (
+        pathname.startsWith("/workspace") ||
+        pathname.startsWith("/settings")
+      ) {
         router.replace("/login")
       } else {
         markReady()
@@ -76,38 +79,5 @@ export function OpenABTransportProvider({ children }: { children: ReactNode }) {
     )
   }
 
-  if (isDesktop() || !pathname.startsWith("/workspace")) return children
-
-  const disconnect = () => {
-    localStorage.removeItem("codeg_token")
-    clearOpenABTransport()
-    router.replace("/login")
-  }
-
-  return (
-    <>
-      {children}
-      <div className="fixed left-1/2 top-1 z-[70] flex h-8 -translate-x-1/2 items-center gap-1 border-x border-border/60 bg-background/80 px-2 text-xs text-muted-foreground backdrop-blur">
-        <span className="px-1 font-medium">OpenAB</span>
-        <button
-          type="button"
-          aria-label="Refresh OpenAB sessions"
-          title="Refresh OpenAB sessions"
-          className="inline-flex size-7 items-center justify-center rounded-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={() => window.location.reload()}
-        >
-          <RefreshCw className="size-3.5" />
-        </button>
-        <button
-          type="button"
-          aria-label="Disconnect from OpenAB"
-          title="Disconnect from OpenAB"
-          className="inline-flex size-7 items-center justify-center rounded-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={disconnect}
-        >
-          <LogOut className="size-3.5" />
-        </button>
-      </div>
-    </>
-  )
+  return children
 }

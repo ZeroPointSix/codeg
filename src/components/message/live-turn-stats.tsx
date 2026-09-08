@@ -392,7 +392,7 @@ export function LiveTurnStats({
                 aria-label={t("outputSpeedAria")}
                 className="h-3 w-3 shrink-0"
               />
-              {tps.toFixed(1)} tok/s
+              ≈ {tps.toFixed(1)} tok/s
             </span>
           </>
         )}

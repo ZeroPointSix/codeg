@@ -1,4 +1,6 @@
 import { memo, useMemo, useState, type ReactNode } from "react"
+import { isOpenABMode } from "@/lib/transport"
+import { OpenABReasoning } from "./openab-reasoning"
 import type { AdaptedContentPart } from "@/lib/adapters/ai-elements-adapter"
 import {
   classifyToolKind,
@@ -2922,6 +2924,13 @@ const ReasoningPart = memo(function ReasoningPart({
 }: {
   part: Extract<AdaptedContentPart, { type: "reasoning" }>
 }) {
+  if (isOpenABMode())
+    return (
+      <OpenABReasoning
+        content={part.content}
+        isStreaming={part.isStreaming ?? false}
+      />
+    )
   const hasContent = part.content.trim().length > 0
   const expandable = hasContent || part.isStreaming
   return (

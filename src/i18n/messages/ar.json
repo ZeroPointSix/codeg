@@ -1901,7 +1901,8 @@
       "updatedAt": "تاريخ التحديث",
       "none": "—",
       "copyField": "نسخ {field}",
-      "copiedField": "تم نسخ {field}"
+      "copiedField": "تم نسخ {field}",
+      "openabUsageUnavailable": "لم يقدّم OpenAB بيانات استخدام الرموز. سرعة الإخراج تقدير محلي وليست عدد الرموز المفوترة."
     },
     "conversationCard": {
       "untitledConversation": "محادثة بدون عنوان",
@@ -3081,7 +3082,9 @@
       "reasoning": {
         "thinking": "جارٍ التفكير…",
         "thoughtForFewSeconds": "تفكير",
-        "thoughtForSeconds": "تفكير"
+        "thoughtForSeconds": "تفكير",
+        "clear": "مسح العرض",
+        "clearHint": "يمسح المحتوى من العرض الحالي فقط، ولا يحذف السجل البعيد."
       },
       "mermaid": {
         "diagram": "مخطط",

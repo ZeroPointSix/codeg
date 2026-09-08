@@ -138,7 +138,7 @@ describe("OpenABTransport", () => {
     )
     expect(initial[0].id).toBeTypeOf("number")
     expect(initial[0].external_id).toBe("admin:fixture-session")
-    expect(initial[0].status).toBe("in_progress")
+    expect(initial[0].status).toBe("pending_review")
     const stableId = initial[0].id
     first.destroy()
 

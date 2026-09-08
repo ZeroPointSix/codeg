@@ -81,7 +81,7 @@ describe("OpenAB adapters", () => {
   it("keeps idle OpenAB sessions visible as resumable conversations", () => {
     const summary = toConversationSummary({ ...session, status: "idle" }, 42)
 
-    expect(summary.status).toBe("in_progress")
+    expect(summary.status).toBe("pending_review")
     expect(summary.kind).toBe("chat")
   })
 
@@ -91,7 +91,7 @@ describe("OpenAB adapters", () => {
       42
     )
 
-    expect(summary.status).toBe("in_progress")
+    expect(summary.status).toBe("pending_review")
     expect(summary.kind).toBe("chat")
   })
 
@@ -193,5 +193,158 @@ describe("OpenAB adapters", () => {
     const patch = denormalizeSnapshot(live)
     expect(patch.lastError).toBe("quota exceeded")
     expect(patch.lastErrorDetails).toBe("retry after 60s")
+  })
+})
+
+describe("OpenAB activity boundaries", () => {
+  it.each([
+    "idle",
+    "connected",
+    "completed",
+    "cancelled",
+    "error",
+    "failed",
+    "disconnected",
+  ])("clears stale live transcript state for %s", (status) => {
+    const live = toLiveSessionSnapshot({ ...session, status }, transcript(), 42)
+    expect(live.status).not.toBe("prompting")
+    expect(live.live_message).toBeNull()
+    expect(live.active_tool_calls).toEqual([])
+    expect(toConversationSummary({ ...session, status }, 42).status).not.toBe(
+      "in_progress"
+    )
+  })
+  it.each(["running", "busy", "prompting"])(
+    "shows activity only for %s",
+    (status) => {
+      expect(toConversationSummary({ ...session, status }, 42).status).toBe(
+        "in_progress"
+      )
+    }
+  )
+  it.each(["", " : ", "...", "\uFF1A"])(
+    "omits placeholder reasoning %j",
+    (content) => {
+      const data = {
+        ...transcript(),
+        entries: [
+          {
+            entry_id: "thought",
+            sequence: 1,
+            role: "assistant" as const,
+            status: "thinking",
+            content,
+          },
+        ],
+      }
+      expect(transcriptToTurns(data)).toEqual([])
+      expect(toLiveSessionSnapshot(session, data, 42).live_message).toBeNull()
+    }
+  )
+  it("preserves meaningful reasoning", () => {
+    const data = {
+      ...transcript(),
+      entries: [
+        {
+          entry_id: "thought",
+          sequence: 1,
+          role: "assistant" as const,
+          status: "thinking",
+          content: "Check the session lifecycle",
+        },
+      ],
+    }
+    expect(transcriptToTurns(data)[0].blocks).toEqual([
+      { type: "thinking", text: "Check the session lifecycle" },
+    ])
+  })
+  it("bundles per-token thinking into one thought on the assistant turn", () => {
+    const data = {
+      ...transcript(),
+      entries: [
+        {
+          entry_id: "user-1",
+          sequence: 1,
+          role: "user" as const,
+          status: "completed",
+          content: "ping",
+        },
+        {
+          entry_id: "t1",
+          sequence: 2,
+          role: "assistant" as const,
+          status: "thinking",
+          content: "The",
+        },
+        {
+          entry_id: "t2",
+          sequence: 3,
+          role: "assistant" as const,
+          status: "thinking",
+          content: " user",
+        },
+        {
+          entry_id: "t3",
+          sequence: 4,
+          role: "assistant" as const,
+          status: "thinking",
+          content: " pinged",
+        },
+        {
+          entry_id: "a1",
+          sequence: 5,
+          role: "assistant" as const,
+          status: "completed",
+          content: "pong",
+        },
+      ],
+    }
+    const turns = transcriptToTurns(data)
+    expect(turns).toHaveLength(2)
+    expect(turns[0].role).toBe("user")
+    expect(turns[1].blocks).toEqual([
+      { type: "thinking", text: "The user pinged" },
+      { type: "text", text: "pong" },
+    ])
+  })
+  it("appends live thinking tokens onto one in-flight thought", () => {
+    const live = toLiveSessionSnapshot(
+      session,
+      {
+        ...transcript(),
+        entries: [
+          {
+            entry_id: "t1",
+            sequence: 1,
+            role: "assistant",
+            status: "thinking",
+            content: "The",
+          },
+        ],
+      },
+      42
+    )
+    const next = applyOpenABSseToSnapshot(
+      live,
+      {
+        id: "g:2",
+        event: "transcript",
+        data: {
+          session_id: session.session_id,
+          sequence: 2,
+          entry: {
+            entry_id: "t2",
+            sequence: 2,
+            role: "assistant",
+            status: "thinking",
+            content: " user",
+          },
+        },
+      },
+      2
+    )
+    expect(next?.live_message?.content).toEqual([
+      { kind: "thinking", text: "The user" },
+    ])
   })
 })

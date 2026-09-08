@@ -4,6 +4,7 @@ import type {
   AgentStats,
   ConnectionInfo,
   ConversationConnectionInfo,
+  ConversationChange,
   ConversationSummary,
   DbConversationSummary,
   FolderDetail,
@@ -13,6 +14,7 @@ import type {
   PromptInputBlock,
   SaveTabsOutcome,
 } from "@/lib/types"
+import { CONVERSATION_CHANGED_EVENT } from "@/lib/types"
 import type {
   CallOptions,
   EventStream,
@@ -22,6 +24,7 @@ import type {
 import {
   OPENAB_FOLDER_ID,
   mapOpenABStatus,
+  mapOpenABConversationStatus,
   toConversationDetail,
   toConversationSummary,
   toLiveSessionSnapshot,
@@ -67,6 +70,10 @@ export class OpenABTransport implements Transport {
   private readonly storage: Storage | null
   private readonly stream: OpenABEventStream
   private readonly sseListeners = new Set<(event: OpenABSseEvent) => void>()
+  private readonly conversationListeners = new Set<
+    (change: ConversationChange) => void
+  >()
+  private readonly conversationStatuses = new Map<string, string>()
   private readonly reconnectListeners = new Set<() => void>()
   private readonly sessionToConversationId = new Map<string, number>()
   private readonly conversationIdToSession = new Map<number, string>()
@@ -112,6 +119,8 @@ export class OpenABTransport implements Transport {
           this.notifyReconnect()
         }
       },
+      onStatus: (sessionId, status) =>
+        this.notifyConversationStatus(sessionId, status),
       subscribe: (listener) => this.subscribeSse(listener),
     })
   }
@@ -124,6 +133,34 @@ export class OpenABTransport implements Transport {
     if (EMPTY_LIST_COMMANDS.has(command)) return [] as T
 
     switch (command) {
+      case "open_settings_window": {
+        const sections = new Set([
+          "appearance",
+          "agents",
+          "mcp",
+          "skills",
+          "experts",
+          "science",
+          "office-tools",
+          "version-control",
+          "shortcuts",
+          "system",
+        ])
+        const section =
+          typeof args.section === "string" && sections.has(args.section)
+            ? args.section
+            : "appearance"
+        const params = new URLSearchParams()
+        if (typeof args.locale === "string") params.set("locale", args.locale)
+        if (typeof args.agentType === "string")
+          params.set("agent", args.agentType)
+        return {
+          path:
+            "/settings/" +
+            section +
+            (params.size ? "?" + params.toString() : ""),
+        } as T
+      }
       case "health":
         return { status: "ok", version: "0.30.4" } as T
       case "app_update_state":
@@ -284,6 +321,7 @@ export class OpenABTransport implements Transport {
           options,
           false
         )
+        void this.stream.reconcile(String(args.connectionId))
         return undefined as T
       }
       case "acp_cancel":
@@ -293,6 +331,7 @@ export class OpenABTransport implements Transport {
           options,
           false
         )
+        void this.stream.reconcile(String(args.connectionId))
         return undefined as T
       case "acp_get_session_snapshot":
         return this.loadLiveSnapshot(String(args.connectionId)) as Promise<T>
@@ -347,9 +386,50 @@ export class OpenABTransport implements Transport {
     event: string,
     handler: (payload: T) => void
   ): Promise<UnsubscribeFn> {
-    void event
-    void handler
-    return () => {}
+    if (event !== CONVERSATION_CHANGED_EVENT) return () => {}
+    const callback = (change: ConversationChange) => handler(change as T)
+    this.conversationListeners.add(callback)
+    const unsubscribe = this.subscribeSse((frame) => {
+      if (!frame.data || typeof frame.data !== "object") return
+      const data = frame.data as {
+        session_id?: string
+        snapshot?: { session_id?: string; status?: string }
+      }
+      const sessionId = data.snapshot?.session_id ?? data.session_id
+      if (!sessionId) return
+      if (
+        frame.event === "status_changed" &&
+        typeof data.snapshot?.status === "string"
+      ) {
+        this.notifyConversationStatus(sessionId, data.snapshot.status)
+      } else if (frame.event === "error") {
+        this.notifyConversationStatus(sessionId, "error")
+      } else if (frame.event === "exited") {
+        this.notifyConversationStatus(sessionId, "exited")
+      }
+    })
+    return () => {
+      this.conversationListeners.delete(callback)
+      unsubscribe()
+    }
+  }
+
+  private notifyConversationStatus(sessionId: string, rawStatus: string): void {
+    const status = mapOpenABConversationStatus(rawStatus)
+    if (this.conversationStatuses.get(sessionId) === status) return
+    this.conversationStatuses.set(sessionId, status)
+    const change: ConversationChange = {
+      kind: "status",
+      id: this.conversationIdForSession(sessionId),
+      status,
+    }
+    for (const listener of this.conversationListeners) {
+      try {
+        listener(change)
+      } catch {
+        /* Isolate consumers of the shared stream. */
+      }
+    }
   }
 
   isDesktop(): boolean {
@@ -387,6 +467,8 @@ export class OpenABTransport implements Transport {
     this.sseController = null
     this.sseListeners.clear()
     this.reconnectListeners.clear()
+    this.conversationListeners.clear()
+    this.conversationStatuses.clear()
     this.stream.destroy()
   }
 
@@ -523,11 +605,13 @@ export class OpenABTransport implements Transport {
       this.getSession(sessionId),
       this.getTranscript(sessionId),
     ])
-    return toLiveSessionSnapshot(
-      session,
-      transcript,
-      this.conversationIdForSession(sessionId),
-      eventSeq
+    return this.stream.stampSnapshot(
+      toLiveSessionSnapshot(
+        session,
+        transcript,
+        this.conversationIdForSession(sessionId),
+        eventSeq
+      )
     )
   }
 

@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback } from "react"
+import { isOpenABMode } from "@/lib/transport"
 import {
   Menu,
   PanelRight,
@@ -143,17 +144,19 @@ export function FolderTitleBar() {
             here. */}
         {isConversations && (
           <>
-            <Button
-              variant="ghost"
-              size="icon"
-              className={cn("h-8 w-8 shrink-0", terminalOpen && "bg-accent")}
-              onClick={() => toggleTerminal()}
-              disabled={!activeFolder}
-              title={tTitleBar("toggleTerminal")}
-              aria-label={tTitleBar("toggleTerminal")}
-            >
-              <SquareTerminal className="h-4 w-4" />
-            </Button>
+            {!isOpenABMode() && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn("h-8 w-8 shrink-0", terminalOpen && "bg-accent")}
+                onClick={() => toggleTerminal()}
+                disabled={!activeFolder}
+                title={tTitleBar("toggleTerminal")}
+                aria-label={tTitleBar("toggleTerminal")}
+              >
+                <SquareTerminal className="h-4 w-4" />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon"

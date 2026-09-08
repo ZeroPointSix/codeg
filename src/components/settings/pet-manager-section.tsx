@@ -99,7 +99,7 @@ export function PetManagerSection() {
       if (!mountedRef.current || seq !== refreshSeqRef.current) return
       setPets(list)
       setActiveId(settings?.activePetId ?? null)
-      setCodexAvailable(importerAvail.available)
+      setCodexAvailable(importerAvail?.available ?? false)
       setPreviewPetId(null)
       replaceSheetUrls({})
       setLoading(false)

@@ -1901,7 +1901,8 @@
       "updatedAt": "Mis à jour",
       "none": "—",
       "copyField": "Copier {field}",
-      "copiedField": "{field} copié"
+      "copiedField": "{field} copié",
+      "openabUsageUnavailable": "OpenAB n’a pas fourni l’utilisation des tokens. La vitesse est une estimation locale, pas un nombre de tokens facturés."
     },
     "conversationCard": {
       "untitledConversation": "Conversation sans titre",
@@ -3081,7 +3082,9 @@
       "reasoning": {
         "thinking": "Réflexion…",
         "thoughtForFewSeconds": "Réflexion",
-        "thoughtForSeconds": "Réflexion"
+        "thoughtForSeconds": "Réflexion",
+        "clear": "Effacer l’affichage",
+        "clearHint": "Efface uniquement la vue actuelle, sans supprimer la transcription distante."
       },
       "mermaid": {
         "diagram": "Diagramme",

@@ -1901,7 +1901,8 @@
       "updatedAt": "更新時間",
       "none": "—",
       "copyField": "複製{field}",
-      "copiedField": "已複製{field}"
+      "copiedField": "已複製{field}",
+      "openabUsageUnavailable": "OpenAB 尚未提供 Token 用量。底欄速率為本機估算，不代表實際計費 Token 數。"
     },
     "conversationCard": {
       "untitledConversation": "未命名會話",
@@ -3081,7 +3082,9 @@
       "reasoning": {
         "thinking": "思考中…",
         "thoughtForFewSeconds": "思考",
-        "thoughtForSeconds": "思考"
+        "thoughtForSeconds": "思考",
+        "clear": "清除顯示",
+        "clearHint": "只清除目前畫面的思考內容，不刪除遠端紀錄。"
       },
       "mermaid": {
         "diagram": "圖表",

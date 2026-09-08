@@ -71,6 +71,7 @@ describe("OpenAB workbench mock flow", () => {
         push = (chunk) => controller.enqueue(encoder.encode(chunk))
       },
     })
+    let status = "idle"
     const urls: string[] = []
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init = {}) => {
       const url = String(input)
@@ -89,10 +90,14 @@ describe("OpenAB workbench mock flow", () => {
       if (url.endsWith("/api/v1/sessions")) return json([session()])
       if (url.endsWith("/transcript")) return json(transcript())
       if (url.endsWith("/messages")) {
+        status = "running"
         return json({ accepted: true, session_id: session().session_id }, 202)
       }
-      if (url.endsWith("/cancel")) return new Response(null, { status: 204 })
-      return json(session())
+      if (url.endsWith("/cancel")) {
+        status = "idle"
+        return new Response(null, { status: 204 })
+      }
+      return json({ ...session(), status })
     }) as unknown as typeof fetch
 
     const transport = new OpenABTransport({
@@ -131,6 +136,9 @@ describe("OpenAB workbench mock flow", () => {
       blocks: [{ type: "text", text: "Run the tests" }],
     })
 
+    await vi.waitFor(() =>
+      expect(onSnapshot.mock.lastCall?.[0].status).toBe("prompting")
+    )
     const transcriptGetsBeforeStream = urls.filter((item) =>
       item.includes("/transcript")
     ).length
@@ -197,7 +205,7 @@ describe("OpenAB workbench mock flow", () => {
     })
 
     const transcriptGets = urls.filter((item) => item.includes("/transcript"))
-    expect(transcriptGets.length).toBe(transcriptGetsBeforeStream)
+    expect(transcriptGets.length).toBe(transcriptGetsBeforeStream + 1)
     expect(urls.some((item) => item.endsWith("/messages"))).toBe(true)
     expect(urls.some((item) => item.endsWith("/cancel"))).toBe(true)
 

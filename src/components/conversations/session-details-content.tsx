@@ -469,7 +469,13 @@ export function SessionDetailsContent({
             )}
           </dl>
         ) : (
-          <div className="text-muted-foreground">{t("noStats")}</div>
+          <div className="text-muted-foreground">
+            {t(
+              summary.agent_type === "openab"
+                ? "openabUsageUnavailable"
+                : "noStats"
+            )}
+          </div>
         )}
       </section>
 
