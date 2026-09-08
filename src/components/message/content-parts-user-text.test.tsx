@@ -1,5 +1,5 @@
 import { type ReactNode } from "react"
-import { render } from "@testing-library/react"
+import { fireEvent, render } from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
 import { describe, expect, it, vi } from "vitest"
 
@@ -27,6 +27,7 @@ vi.mock("@/components/ai-elements/message", () => ({
   MessageResponse: ({ children }: { children: string }) => (
     <div>{children}</div>
   ),
+  normalizeMathDelimiters: (value: string) => value,
 }))
 
 import { ContentPartsRenderer } from "./content-parts-renderer"
@@ -87,5 +88,38 @@ describe("ContentPartsRenderer — empty user text parts", () => {
       "assistant"
     )
     expect(stackedChildren(container)).toBe(2)
+  })
+})
+
+describe("ContentPartsRenderer — assistant reasoning bundle", () => {
+  it("renders one disclosure for reasoning from consecutive sub-rounds", () => {
+    const { container } = renderParts(
+      [
+        {
+          type: "reasoning",
+          content: "Inspect the request",
+          isStreaming: false,
+        },
+        { type: "text", text: "Calling the tool" },
+        {
+          type: "reasoning",
+          content: "Check the result",
+          isStreaming: false,
+        },
+      ],
+      "assistant"
+    )
+
+    const triggers = container.querySelectorAll("button")
+    expect(triggers).toHaveLength(1)
+    expect(stackedChildren(container)).toBe(2)
+    expect(container.textContent).not.toContain("Inspect the request")
+    expect(container.textContent).not.toContain("Check the result")
+
+    fireEvent.click(triggers[0])
+
+    expect(triggers[0]).toHaveAttribute("aria-expanded", "true")
+    expect(container.textContent).toContain("Inspect the request")
+    expect(container.textContent).toContain("Check the result")
   })
 })

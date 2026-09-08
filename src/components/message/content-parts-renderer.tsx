@@ -2,6 +2,7 @@ import { memo, useMemo, useState, type ReactNode } from "react"
 import { isOpenABMode } from "@/lib/transport"
 import { OpenABReasoning } from "./openab-reasoning"
 import type { AdaptedContentPart } from "@/lib/adapters/ai-elements-adapter"
+import { mergeReasoningParts } from "@/lib/adapters/ai-elements-adapter"
 import {
   classifyToolKind,
   TOOL_KIND_ORDER,
@@ -3076,6 +3077,10 @@ export const ContentPartsRenderer = memo(function ContentPartsRenderer({
   role,
   isStreaming = false,
 }: ContentPartsRendererProps) {
+  const renderedParts = useMemo(
+    () => (role === "assistant" ? mergeReasoningParts(parts) : parts),
+    [parts, role]
+  )
   const renderPart = (part: AdaptedContentPart, keyId: string): ReactNode => {
     if (part.type === "text") {
       // An empty text part renders nothing but still earns a `space-y-4` gap
@@ -3157,7 +3162,7 @@ export const ContentPartsRenderer = memo(function ContentPartsRenderer({
 
   return (
     <div className="space-y-4">
-      {parts.map((part, i) => renderPart(part, `${i}`))}
+      {renderedParts.map((part, i) => renderPart(part, `${i}`))}
     </div>
   )
 })
