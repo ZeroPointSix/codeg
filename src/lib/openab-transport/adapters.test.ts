@@ -81,7 +81,7 @@ describe("OpenAB adapters", () => {
   it("keeps idle OpenAB sessions visible as resumable conversations", () => {
     const summary = toConversationSummary({ ...session, status: "idle" }, 42)
 
-    expect(summary.status).toBe("in_progress")
+    expect(summary.status).toBe("pending_review")
     expect(summary.kind).toBe("chat")
   })
 
@@ -91,7 +91,7 @@ describe("OpenAB adapters", () => {
       42
     )
 
-    expect(summary.status).toBe("in_progress")
+    expect(summary.status).toBe("pending_review")
     expect(summary.kind).toBe("chat")
   })
 
@@ -193,5 +193,69 @@ describe("OpenAB adapters", () => {
     const patch = denormalizeSnapshot(live)
     expect(patch.lastError).toBe("quota exceeded")
     expect(patch.lastErrorDetails).toBe("retry after 60s")
+  })
+})
+
+describe("OpenAB activity boundaries", () => {
+  it.each([
+    "idle",
+    "connected",
+    "completed",
+    "cancelled",
+    "error",
+    "failed",
+    "disconnected",
+  ])("clears stale live transcript state for %s", (status) => {
+    const live = toLiveSessionSnapshot({ ...session, status }, transcript(), 42)
+    expect(live.status).not.toBe("prompting")
+    expect(live.live_message).toBeNull()
+    expect(live.active_tool_calls).toEqual([])
+    expect(toConversationSummary({ ...session, status }, 42).status).not.toBe(
+      "in_progress"
+    )
+  })
+  it.each(["running", "busy", "prompting"])(
+    "shows activity only for %s",
+    (status) => {
+      expect(toConversationSummary({ ...session, status }, 42).status).toBe(
+        "in_progress"
+      )
+    }
+  )
+  it.each(["", " : ", "...", "\uFF1A"])(
+    "omits placeholder reasoning %j",
+    (content) => {
+      const data = {
+        ...transcript(),
+        entries: [
+          {
+            entry_id: "thought",
+            sequence: 1,
+            role: "assistant" as const,
+            status: "thinking",
+            content,
+          },
+        ],
+      }
+      expect(transcriptToTurns(data)).toEqual([])
+      expect(toLiveSessionSnapshot(session, data, 42).live_message).toBeNull()
+    }
+  )
+  it("preserves meaningful reasoning", () => {
+    const data = {
+      ...transcript(),
+      entries: [
+        {
+          entry_id: "thought",
+          sequence: 1,
+          role: "assistant" as const,
+          status: "thinking",
+          content: "Check the session lifecycle",
+        },
+      ],
+    }
+    expect(transcriptToTurns(data)[0].blocks).toEqual([
+      { type: "thinking", text: "Check the session lifecycle" },
+    ])
   })
 })

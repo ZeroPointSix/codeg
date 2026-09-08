@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback } from "react"
+import { isOpenABMode } from "@/lib/transport"
 import { PanelRight, Settings, SquareTerminal } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { openSettingsWindow } from "@/lib/api"
@@ -61,19 +62,24 @@ export function RightEdgeChrome() {
       <div className="flex items-center gap-1 pr-3">
         {isConversations && (
           <>
-            <Button
-              variant="ghost"
-              size="icon"
-              className={`h-6 w-6 hover:bg-foreground/10 hover:text-foreground/80 dark:hover:bg-foreground/10 ${terminalOpen ? "bg-accent" : ""}`}
-              onClick={() => toggleTerminal()}
-              disabled={!activeFolder}
-              title={tTitleBar("withShortcut", {
-                label: tTitleBar("toggleTerminal"),
-                shortcut: formatShortcutLabel(shortcuts.toggle_terminal, isMac),
-              })}
-            >
-              <SquareTerminal className="h-3.5 w-3.5" />
-            </Button>
+            {!isOpenABMode() && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className={`h-6 w-6 hover:bg-foreground/10 hover:text-foreground/80 dark:hover:bg-foreground/10 ${terminalOpen ? "bg-accent" : ""}`}
+                onClick={() => toggleTerminal()}
+                disabled={!activeFolder}
+                title={tTitleBar("withShortcut", {
+                  label: tTitleBar("toggleTerminal"),
+                  shortcut: formatShortcutLabel(
+                    shortcuts.toggle_terminal,
+                    isMac
+                  ),
+                })}
+              >
+                <SquareTerminal className="h-3.5 w-3.5" />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon"

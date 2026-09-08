@@ -1,5 +1,6 @@
 import type {
   ContentBlock,
+  ConversationStatus,
   DbConversationDetail,
   DbConversationSummary,
   LiveMessage,
@@ -26,12 +27,29 @@ export const OPENAB_FOLDER_ID = 954_000_000
  * integer to OpenAB as a session id.
  */
 export function mapOpenABStatus(status: string): LiveSessionSnapshot["status"] {
-  if (["running", "starting", "busy", "prompting"].includes(status)) {
+  if (["running", "busy", "prompting"].includes(status)) {
     return "prompting"
   }
   if (status === "error" || status === "failed") return "error"
-  if (status === "disconnected") return "disconnected"
-  return "connected"
+  if (status === "starting") return "connecting"
+  if (["idle", "connected", "completed", "cancelled"].includes(status))
+    return "connected"
+  return "disconnected"
+}
+
+/** Idle is resumable, not generating; completed would archive it in Codeg. */
+export function mapOpenABConversationStatus(
+  status: string
+): ConversationStatus {
+  if (mapOpenABStatus(status) === "prompting") return "in_progress"
+  if (["error", "failed", "cancelled", "exited"].includes(status))
+    return "cancelled"
+  return "pending_review"
+}
+
+/** Redacted/empty reasoning placeholders are not useful content. */
+export function hasMeaningfulThinking(text: string): boolean {
+  return typeof text === "string" && /[\p{L}\p{N}]/u.test(text)
 }
 
 export function mapOpenABLastError(raw: unknown): SessionLastError | null {
@@ -108,7 +126,11 @@ function patchSnapshotFromEntry(
   let liveMessage = current.live_message
   let activeToolCalls = current.active_tool_calls
   if (entry.role === "assistant" || entry.role === "system") {
-    const nextLive = latestLiveMessage([entry])
+    const nextLive = latestLiveMessage([
+      entry.status === "completed" && entry.role === "assistant"
+        ? { ...entry, status: "streaming" }
+        : entry,
+    ])
     if (nextLive) liveMessage = nextLive
     else if (liveMessage?.id === entry.entry_id) liveMessage = null
   }
@@ -122,8 +144,8 @@ function patchSnapshotFromEntry(
   }
   return {
     ...current,
-    live_message: liveMessage,
-    active_tool_calls: activeToolCalls,
+    live_message: current.status === "prompting" ? liveMessage : null,
+    active_tool_calls: current.status === "prompting" ? activeToolCalls : [],
     event_seq: eventSeq,
   }
 }
@@ -181,6 +203,8 @@ export function applyOpenABSseToSnapshot(
     return {
       ...current,
       status: "error",
+      live_message: null,
+      active_tool_calls: [],
       last_error: lastError ?? current.last_error,
       event_seq: eventSeq,
     }
@@ -202,10 +226,7 @@ export function toConversationSummary(
     agent_type: "openab",
     // OpenAB idle sessions remain resumable. Codeg's completed status means the
     // user archived the conversation and hides it from the sidebar by default.
-    status:
-      session.status === "error" || session.status === "failed"
-        ? "cancelled"
-        : "in_progress",
+    status: mapOpenABConversationStatus(session.status),
     kind: "chat",
     model: session.model,
     git_branch: null,
@@ -304,12 +325,17 @@ function entryBlocks(entry: OpenABTranscriptEntry): ContentBlock[] {
 export function transcriptToTurns(
   transcript: OpenABTranscriptSnapshot
 ): MessageTurn[] {
-  return latestTranscriptEntries(transcript).map((entry) => ({
-    id: entry.entry_id,
-    role: entry.role === "tool" ? "assistant" : entry.role,
-    blocks: entryBlocks(entry),
-    timestamp: entry.timestamp ?? new Date(0).toISOString(),
-  }))
+  return latestTranscriptEntries(transcript)
+    .filter(
+      (entry) =>
+        entry.status !== "thinking" || hasMeaningfulThinking(entry.content)
+    )
+    .map((entry) => ({
+      id: entry.entry_id,
+      role: entry.role === "tool" ? "assistant" : entry.role,
+      blocks: entryBlocks(entry),
+      timestamp: entry.timestamp ?? new Date(0).toISOString(),
+    }))
 }
 
 function toToolCallState(entry: OpenABTranscriptEntry): ToolCallState {
@@ -341,7 +367,9 @@ function latestLiveMessage(
     .find(
       (candidate) =>
         candidate.role === "assistant" &&
-        (candidate.status === "streaming" || candidate.status === "thinking")
+        (candidate.status === "streaming" ||
+          (candidate.status === "thinking" &&
+            hasMeaningfulThinking(candidate.content)))
     )
   if (!entry) return null
   return {
@@ -363,6 +391,7 @@ export function toLiveSessionSnapshot(
   eventSeq?: number
 ): LiveSessionSnapshot {
   const entries = latestTranscriptEntries(transcript)
+  const status = mapOpenABStatus(session.status)
   const tools = entries
     .filter((entry) => entry.role === "tool")
     .map(toToolCallState)
@@ -373,10 +402,10 @@ export function toLiveSessionSnapshot(
     connection_id: session.session_id,
     conversation_id: conversationId,
     folder_id: OPENAB_FOLDER_ID,
-    status: mapOpenABStatus(session.status),
+    status,
     external_id: session.session_id,
-    live_message: latestLiveMessage(entries),
-    active_tool_calls: tools,
+    live_message: status === "prompting" ? latestLiveMessage(entries) : null,
+    active_tool_calls: status === "prompting" ? tools : [],
     pending_permission: null,
     pending_question: null,
     pending_plan_approval: null,
@@ -404,7 +433,12 @@ export function toLiveSessionSnapshot(
     session_failures: [],
     async_tasks: [],
     goal_actions: [],
-    event_seq: eventSeq ?? Math.max(0, transcript.stream_next_sequence - 1),
+    event_seq:
+      eventSeq ??
+      Math.max(
+        0,
+        (transcript.stream_next_sequence ?? transcript.next_sequence) - 1
+      ),
   }
 }
 

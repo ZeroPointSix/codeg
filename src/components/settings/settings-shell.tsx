@@ -31,6 +31,7 @@ import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { AppToaster } from "@/components/ui/app-toaster"
 import { cn } from "@/lib/utils"
+import { isOpenABMode } from "@/lib/transport"
 import { detectEnvironment } from "@/lib/transport/detect"
 import { AppTitleBar } from "@/components/layout/app-title-bar"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -189,7 +190,8 @@ export function SettingsShell({ children }: SettingsShellProps) {
 
   const filteredNavItems = SETTINGS_NAV_ITEMS.filter(
     (item) =>
-      !(item.labelKey === "web_service" && detectEnvironment() === "web")
+      !(item.labelKey === "web_service" && detectEnvironment() === "web") &&
+      !(isOpenABMode() && ["skills", "skill_packs"].includes(item.labelKey))
   )
 
   const navContent = (

@@ -109,4 +109,21 @@ describe("OpenABTransportProvider", () => {
     )
     expect(transportMocks.configureOpenABTransport).toHaveBeenCalledOnce()
   })
+  it("preserves workspace tabs without the redundant OpenAB toolbar", async () => {
+    localStorage.setItem("codeg_token", "test-token")
+    render(
+      <OpenABTransportProvider>
+        <div role="tab">Existing session</div>
+      </OpenABTransportProvider>
+    )
+    expect(
+      await screen.findByRole("tab", { name: "Existing session" })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "Refresh OpenAB sessions" })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "Disconnect from OpenAB" })
+    ).not.toBeInTheDocument()
+  })
 })

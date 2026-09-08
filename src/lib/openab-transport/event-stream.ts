@@ -6,7 +6,11 @@ import type {
   EventStream,
   EventStreamSubscription,
 } from "@/lib/transport/types"
-import { applyOpenABSseToSnapshot, mapOpenABLastError } from "./adapters"
+import {
+  applyOpenABSseToSnapshot,
+  mapOpenABLastError,
+  mapOpenABStatus,
+} from "./adapters"
 import type { OpenABSseEvent } from "./types"
 
 interface OpenABStreamDependencies {
@@ -15,17 +19,27 @@ interface OpenABStreamDependencies {
     eventSeq?: number
   ): Promise<LiveSessionSnapshot>
   recover?(): Promise<void>
+  onStatus?(sessionId: string, status: string): void
   subscribe(listener: (event: OpenABSseEvent) => void): () => void
 }
 
+export const OPENAB_STALL_TIMEOUT_MS = 120_000
+
 interface ActiveSubscription {
+  id: string
   connectionId: string
   handlers: AttachHandlers
   detached: boolean
   lastSnapshot: LiveSessionSnapshot | null
   hydrateInFlight: Promise<void> | null
   queuedHydrate: boolean
-  queuedEventSeq?: number
+  revision: number
+  wireGeneration: string | null
+  wireSequence: number
+  lastProgressAt: number
+  progressVersion: number
+  stallCheckInFlight: boolean
+  stallTimer: ReturnType<typeof setTimeout> | null
 }
 
 export function isOpenABSessionGoneError(error: unknown): boolean {
@@ -120,78 +134,120 @@ function lifecycleEnvelope(
     return null
   if (status === "error" || status === "failed") {
     const lastError = mapOpenABLastError(data.snapshot?.last_error)
-    if (lastError) {
-      return {
-        seq,
-        connection_id: connectionId,
-        type: "error",
-        message: lastError.message,
-        agent_type: "openab",
-        code: lastError.code ?? null,
-        details: lastError.details ?? null,
-      }
+    return {
+      seq,
+      connection_id: connectionId,
+      type: "error",
+      message: lastError?.message ?? "OpenAB session failed",
+      agent_type: "openab",
+      code: lastError?.code ?? null,
+      details: lastError?.details ?? null,
     }
   }
-  if (status === "idle") {
+  if (["idle", "connected", "completed", "cancelled"].includes(status)) {
     return {
       seq,
       connection_id: connectionId,
       type: "turn_complete",
       session_id: connectionId,
-      stop_reason: "end_turn",
+      stop_reason: status === "cancelled" ? "cancelled" : "end_turn",
     }
   }
   return {
     seq,
     connection_id: connectionId,
     type: "status_changed",
-    status: status === "error" ? "error" : "prompting",
+    status: mapOpenABStatus(status),
   }
+}
+
+function progressFingerprint(snapshot: LiveSessionSnapshot): string {
+  return JSON.stringify([
+    snapshot.status,
+    snapshot.live_message?.id,
+    snapshot.live_message?.content,
+    snapshot.active_tool_calls,
+  ])
 }
 
 export class OpenABEventStream implements EventStream {
   private subscriptions = new Map<string, ActiveSubscription>()
   private unsubscribeSource: (() => void) | null = null
+  // ACP uses one integer cursor. OpenAB uses generation:sequence and may reset
+  // its sequence to zero. Never mix the wire cursor with the delivery cursor.
+  private deliverySequences = new Map<string, number>()
 
   constructor(private dependencies: OpenABStreamDependencies) {}
 
+  stampSnapshot(snapshot: LiveSessionSnapshot): LiveSessionSnapshot {
+    return {
+      ...snapshot,
+      event_seq: this.nextSequence(snapshot.connection_id, snapshot.event_seq),
+    }
+  }
+
+  async reconcile(connectionId?: string): Promise<void> {
+    await Promise.all(
+      [...this.subscriptions.values()]
+        .filter(
+          (subscription) =>
+            !connectionId || subscription.connectionId === connectionId
+        )
+        .map((subscription) => this.enqueueHydrate(subscription))
+    )
+  }
+
+  private nextSequence(connectionId: string, minimum = 0): number {
+    const seq =
+      Math.max(this.deliverySequences.get(connectionId) ?? 0, minimum) + 1
+    this.deliverySequences.set(connectionId, seq)
+    return seq
+  }
+
   attach(
     connectionId: string,
-    _options: AttachOptions,
+    options: AttachOptions,
     handlers: AttachHandlers
   ): EventStreamSubscription {
     const subscriptionId = randomUUID()
+    this.nextSequence(connectionId, options.sinceSeq ?? 0)
     const subscription: ActiveSubscription = {
+      id: subscriptionId,
       connectionId,
       handlers,
       detached: false,
       lastSnapshot: null,
       hydrateInFlight: null,
       queuedHydrate: false,
+      revision: 0,
+      wireGeneration: null,
+      wireSequence: -1,
+      lastProgressAt: Date.now(),
+      progressVersion: 0,
+      stallCheckInFlight: false,
+      stallTimer: null,
     }
     this.subscriptions.set(subscriptionId, subscription)
     this.ensureSource()
     void this.enqueueHydrate(subscription)
-    return {
-      subscriptionId,
-      detach: () => {
-        subscription.detached = true
-        this.subscriptions.delete(subscriptionId)
-        if (this.subscriptions.size === 0) {
-          this.unsubscribeSource?.()
-          this.unsubscribeSource = null
-        }
-      },
+    return { subscriptionId, detach: () => this.detach(subscription) }
+  }
+
+  private detach(subscription: ActiveSubscription): void {
+    subscription.detached = true
+    if (subscription.stallTimer) clearTimeout(subscription.stallTimer)
+    subscription.stallTimer = null
+    this.subscriptions.delete(subscription.id)
+    if (this.subscriptions.size === 0) {
+      this.unsubscribeSource?.()
+      this.unsubscribeSource = null
     }
   }
 
   destroy(): void {
-    this.unsubscribeSource?.()
-    this.unsubscribeSource = null
-    for (const subscription of this.subscriptions.values()) {
-      subscription.detached = true
-    }
-    this.subscriptions.clear()
+    for (const subscription of [...this.subscriptions.values()])
+      this.detach(subscription)
+    this.deliverySequences.clear()
   }
 
   private ensureSource(): void {
@@ -201,65 +257,162 @@ export class OpenABEventStream implements EventStream {
     })
   }
 
-  private enqueueHydrate(
+  private publish(
     subscription: ActiveSubscription,
-    eventSeq?: number
+    snapshot: LiveSessionSnapshot,
+    event?: OpenABSseEvent
+  ): void {
+    if (subscription.detached) return
+    const previous = subscription.lastSnapshot
+    const changed =
+      !previous ||
+      progressFingerprint(previous) !== progressFingerprint(snapshot)
+    if (changed) {
+      subscription.lastProgressAt = Date.now()
+      subscription.progressVersion += 1
+    }
+    // Let terminal side effects consume the live message BEFORE clearing it.
+    // The following snapshot must have a strictly higher ACP sequence too.
+    const boundary = event ?? {
+      id: null,
+      event: "status_changed",
+      data: {
+        snapshot: { status: snapshot.status, last_error: snapshot.last_error },
+      },
+    }
+    const envelope = previous
+      ? lifecycleEnvelope(boundary, subscription.connectionId, 0)
+      : null
+    if (
+      envelope &&
+      (envelope.type === "turn_complete"
+        ? previous?.status === "prompting"
+        : previous?.status !== snapshot.status ||
+          JSON.stringify(previous?.last_error) !==
+            JSON.stringify(snapshot.last_error))
+    ) {
+      subscription.handlers.onEvent({
+        ...envelope,
+        seq: this.nextSequence(subscription.connectionId),
+      })
+    }
+    if (subscription.detached) return
+    const stamped = this.stampSnapshot(snapshot)
+    subscription.lastSnapshot = stamped
+    subscription.handlers.onSnapshot(stamped, stamped.event_seq)
+    if (previous?.status !== snapshot.status) {
+      const raw = boundary.data as { snapshot?: { status?: string } }
+      this.dependencies.onStatus?.(
+        subscription.connectionId,
+        raw.snapshot?.status ?? snapshot.status
+      )
+    }
+    this.scheduleStallCheck(subscription)
+  }
+
+  private scheduleStallCheck(subscription: ActiveSubscription): void {
+    if (subscription.stallTimer) clearTimeout(subscription.stallTimer)
+    subscription.stallTimer = null
+    if (
+      subscription.detached ||
+      subscription.lastSnapshot?.status !== "prompting" ||
+      subscription.stallCheckInFlight
+    )
+      return
+    subscription.stallTimer = setTimeout(
+      () => {
+        subscription.stallTimer = null
+        void this.checkForStall(subscription)
+      },
+      Math.max(
+        1000,
+        OPENAB_STALL_TIMEOUT_MS - (Date.now() - subscription.lastProgressAt)
+      )
+    )
+  }
+
+  private async checkForStall(subscription: ActiveSubscription): Promise<void> {
+    if (subscription.stallCheckInFlight) return
+    subscription.stallCheckInFlight = true
+    try {
+      await this.reconcileStalled(subscription)
+    } finally {
+      subscription.stallCheckInFlight = false
+      this.scheduleStallCheck(subscription)
+    }
+  }
+
+  private async reconcileStalled(
+    subscription: ActiveSubscription
   ): Promise<void> {
+    const previous = subscription.lastSnapshot
+    if (subscription.detached || previous?.status !== "prompting") return
+    const version = subscription.progressVersion
+    try {
+      const snapshot = await this.dependencies.loadSnapshot(
+        subscription.connectionId
+      )
+      if (subscription.detached || version !== subscription.progressVersion)
+        return
+      if (progressFingerprint(previous) !== progressFingerprint(snapshot)) {
+        this.publish(subscription, snapshot)
+        return
+      }
+    } catch {
+      if (subscription.detached || version !== subscription.progressVersion)
+        return
+    }
+    // This is a client stream failure, NOT evidence that the remote turn ended.
+    // Do not silently cancel a potentially long-running remote tool.
+    const lastError = {
+      message:
+        "No OpenAB progress for 2 minutes. Reconnect to check the remote turn or stop it; it may still be running.",
+      code: "stream_stalled",
+      details:
+        "The client observed no new output or tool progress, then attempted a REST reconciliation.",
+    }
+    this.publish(subscription, {
+      ...previous,
+      status: "error",
+      live_message: null,
+      active_tool_calls: [],
+      last_error: lastError,
+    })
+  }
+
+  private enqueueHydrate(subscription: ActiveSubscription): Promise<void> {
     subscription.queuedHydrate = true
-    subscription.queuedEventSeq = eventSeq
     if (subscription.hydrateInFlight) return subscription.hydrateInFlight
     const run = (async () => {
       try {
         do {
           subscription.queuedHydrate = false
-          const seq = subscription.queuedEventSeq
-          subscription.queuedEventSeq = undefined
-          await this.hydrateOnce(subscription, seq)
+          const revision = subscription.revision
+          try {
+            const snapshot = await this.dependencies.loadSnapshot(
+              subscription.connectionId,
+              undefined
+            )
+            if (subscription.detached) return
+            // A REST response begun before a live event must not rewind it.
+            if (revision !== subscription.revision) continue
+            this.publish(subscription, snapshot)
+          } catch (error) {
+            if (subscription.detached || isDestroyedTransportError(error))
+              return
+            // Remove first: onDetached may synchronously install a replacement.
+            this.detach(subscription)
+            subscription.handlers.onDetached(
+              isOpenABSessionGoneError(error) ? "connection_gone" : "lagged"
+            )
+          }
         } while (!subscription.detached && subscription.queuedHydrate)
       } finally {
         subscription.hydrateInFlight = null
-        if (!subscription.detached && subscription.queuedHydrate) {
-          void this.enqueueHydrate(subscription, subscription.queuedEventSeq)
-        }
       }
     })()
     subscription.hydrateInFlight = run
     return run
-  }
-
-  private async hydrateOnce(
-    subscription: ActiveSubscription,
-    eventSeq?: number
-  ): Promise<void> {
-    try {
-      const snapshot = await this.dependencies.loadSnapshot(
-        subscription.connectionId,
-        eventSeq
-      )
-      if (subscription.detached) return
-      subscription.lastSnapshot = snapshot
-      subscription.handlers.onSnapshot(snapshot, snapshot.event_seq)
-    } catch (error) {
-      if (subscription.detached || isDestroyedTransportError(error)) return
-      subscription.handlers.onDetached(
-        isOpenABSessionGoneError(error) ? "connection_gone" : "lagged"
-      )
-    }
-  }
-
-  private applyIncremental(
-    subscription: ActiveSubscription,
-    event: OpenABSseEvent,
-    seq: number
-  ): boolean {
-    if (!subscription.lastSnapshot) return false
-    const next = applyOpenABSseToSnapshot(subscription.lastSnapshot, event, seq)
-    if (!next) return false
-    subscription.lastSnapshot = next
-    if (!subscription.detached) {
-      subscription.handlers.onSnapshot(next, next.event_seq)
-    }
-    return true
   }
 
   private async handleEvent(event: OpenABSseEvent): Promise<void> {
@@ -267,36 +420,38 @@ export class OpenABEventStream implements EventStream {
       try {
         await this.dependencies.recover?.()
       } catch {
-        // Per-session hydration still repairs active views when global refresh fails.
+        // Active views can still recover if refreshing the global list failed.
       }
       await Promise.all(
-        [...this.subscriptions.values()].map((subscription) =>
-          this.enqueueHydrate(subscription)
-        )
+        [...this.subscriptions.values()].map((subscription) => {
+          subscription.wireGeneration = null
+          subscription.wireSequence = -1
+          return this.enqueueHydrate(subscription)
+        })
       )
       return
     }
-
     const sessionId = sessionIdForEvent(event)
     if (!sessionId) return
-    const seq = globalSequence(event.id, event.data)
-    const matching = [...this.subscriptions.values()].filter(
-      (subscription) => subscription.connectionId === sessionId
-    )
-    for (const subscription of matching) {
-      const envelope = lifecycleEnvelope(event, sessionId, seq)
-      if (this.applyIncremental(subscription, event, seq)) {
-        if (!subscription.detached && envelope) {
-          subscription.handlers.onEvent(envelope)
-        }
+    const wireSeq = globalSequence(event.id, event.data)
+    const generation = event.id?.slice(0, event.id.lastIndexOf(":")) ?? null
+    for (const subscription of [...this.subscriptions.values()]) {
+      if (subscription.connectionId !== sessionId || subscription.detached)
         continue
-      }
-      const snapshotSeq = envelope ? Math.max(0, seq - 1) : seq
-      void this.enqueueHydrate(subscription, snapshotSeq).then(() => {
-        if (!subscription.detached && envelope) {
-          subscription.handlers.onEvent(envelope)
-        }
-      })
+      if (
+        event.id &&
+        generation === subscription.wireGeneration &&
+        wireSeq <= subscription.wireSequence
+      )
+        continue
+      subscription.wireGeneration = generation
+      subscription.wireSequence = wireSeq
+      subscription.revision += 1
+      const next =
+        subscription.lastSnapshot &&
+        applyOpenABSseToSnapshot(subscription.lastSnapshot, event, 0)
+      if (next) this.publish(subscription, next, event)
+      else void this.enqueueHydrate(subscription)
     }
   }
 }

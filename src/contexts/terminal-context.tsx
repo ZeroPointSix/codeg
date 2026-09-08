@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react"
 import { getSystemTerminalSettings, terminalKill } from "@/lib/api"
-import { getTransport } from "@/lib/transport"
+import { getTransport, isOpenABMode } from "@/lib/transport"
 import { randomUUID } from "@/lib/utils"
 import { useActiveFolder } from "@/contexts/active-folder-context"
 import { useShortcutSettings } from "@/hooks/use-shortcut-settings"
@@ -159,6 +159,7 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const toggle = useCallback(() => {
+    if (isOpenABMode()) return
     const autoId = randomUUID()
     const nextCounter = tabCounterRef.current + 1
 
@@ -188,6 +189,7 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
 
   const createTerminalWithCommand = useCallback(
     async (title: string, command: string) => {
+      if (isOpenABMode()) return null
       if (!folderPath) return null
 
       setIsOpen(true)
@@ -214,6 +216,7 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
 
   const createTerminalInDirectory = useCallback(
     async (workingDir: string, title?: string, shell?: string) => {
+      if (isOpenABMode()) return null
       if (!workingDir) return null
 
       setIsOpen(true)

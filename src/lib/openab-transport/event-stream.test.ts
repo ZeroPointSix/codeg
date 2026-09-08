@@ -6,6 +6,12 @@ import {
   parseSseChunk,
 } from "./event-stream"
 
+const streams = new Set<OpenABEventStream>()
+afterEach(() => {
+  for (const stream of streams) stream.destroy()
+  streams.clear()
+})
+
 function handlers() {
   return {
     onSnapshot: vi.fn(),
@@ -64,6 +70,7 @@ describe("OpenAB SSE", () => {
     })
     const nextHandlers = handlers()
 
+    streams.add(stream)
     stream.attach("opaque/session:1", {}, nextHandlers)
     await vi.waitFor(() => expect(loadSnapshot).toHaveBeenCalledTimes(1))
 
@@ -96,6 +103,7 @@ describe("OpenAB SSE", () => {
     })
     const nextHandlers = handlers()
 
+    streams.add(stream)
     stream.attach("opaque/session:1", {}, nextHandlers)
     await vi.waitFor(() => expect(loadSnapshot).toHaveBeenCalledTimes(1))
 
@@ -131,6 +139,7 @@ describe("OpenAB SSE", () => {
     })
     const nextHandlers = handlers()
 
+    streams.add(stream)
     stream.attach("opaque/session:1", {}, nextHandlers)
     await vi.waitFor(() => expect(loadSnapshot).toHaveBeenCalledTimes(1))
 
@@ -148,7 +157,7 @@ describe("OpenAB SSE", () => {
     expect(loadSnapshot).toHaveBeenCalledTimes(1)
     expect(nextHandlers.onEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        seq: 42,
+        seq: expect.any(Number),
         connection_id: "opaque/session:1",
         type: "turn_complete",
       })
@@ -179,6 +188,7 @@ describe("OpenAB SSE", () => {
       },
     })
     const nextHandlers = handlers()
+    streams.add(stream)
     stream.attach("opaque/session:1", {}, nextHandlers)
 
     for (let sequence = 1; sequence <= 20; sequence += 1) {
@@ -218,6 +228,7 @@ describe("OpenAB SSE", () => {
       },
     })
     const nextHandlers = handlers()
+    streams.add(stream)
     stream.attach("opaque/session:1", {}, nextHandlers)
     await vi.waitFor(() => expect(loadSnapshot).toHaveBeenCalledTimes(1))
 
@@ -259,6 +270,7 @@ describe("OpenAB SSE", () => {
       subscribe: () => () => {},
     })
     const nextHandlers = handlers()
+    streams.add(stream)
     stream.attach("opaque/session:1", {}, nextHandlers)
     await vi.waitFor(() => expect(nextHandlers.onDetached).toHaveBeenCalled())
     expect(nextHandlers.onDetached).toHaveBeenCalledWith("lagged")
@@ -275,6 +287,7 @@ describe("OpenAB SSE", () => {
       subscribe: () => () => {},
     })
     const nextHandlers = handlers()
+    streams.add(stream)
     stream.attach("opaque/session:1", {}, nextHandlers)
     await vi.waitFor(() =>
       expect(nextHandlers.onDetached).toHaveBeenCalledWith("connection_gone")
@@ -302,6 +315,7 @@ describe("OpenAB SSE", () => {
       },
     })
     const nextHandlers = handlers()
+    streams.add(stream)
     stream.attach("opaque/session:1", {}, nextHandlers)
     await vi.waitFor(() => expect(loadSnapshot).toHaveBeenCalledTimes(1))
 

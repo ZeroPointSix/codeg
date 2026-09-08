@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
 import type { ReactNode } from "react"
 import { describe, expect, it, vi } from "vitest"
@@ -90,5 +90,14 @@ describe("ReasoningContent", () => {
     const root = screen.getByTestId("streamdown-root")
     expect(root).toHaveAttribute("data-mode", "static")
     expect(root).toHaveAttribute("data-parse-incomplete", "false")
+  })
+  it("preserves a manual collapse while the stream continues", () => {
+    const { rerender } = renderReasoning(true)
+    const trigger = screen.getByRole("button")
+    expect(trigger).toHaveAttribute("aria-expanded", "true")
+    fireEvent.click(trigger)
+    expect(trigger).toHaveAttribute("aria-expanded", "false")
+    rerender(tree(true))
+    expect(trigger).toHaveAttribute("aria-expanded", "false")
   })
 })
