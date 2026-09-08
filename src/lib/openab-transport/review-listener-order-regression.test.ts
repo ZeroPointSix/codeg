@@ -86,7 +86,7 @@ describe("OpenAB listener order", () => {
         )
       )
       await vi.waitFor(() =>
-        expect(changes.at(-1)).toEqual({
+        expect(changes[changes.length - 1]).toEqual({
           kind: "status",
           id: rows[0].id,
           status: "cancelled",

@@ -11,9 +11,10 @@ const streams = new Set<OpenABEventStream>()
 function snapshot(): LiveSessionSnapshot {
   return {
     connection_id: ID,
-    event_seq: 0,
+    conversation_id: null,
+    folder_id: null,
     status: "prompting",
-    last_error: null,
+    external_id: ID,
     live_message: {
       id: "assistant-1",
       role: "assistant",
@@ -21,7 +22,18 @@ function snapshot(): LiveSessionSnapshot {
       started_at: "2026-09-08T00:00:00Z",
     },
     active_tool_calls: [],
-  } as LiveSessionSnapshot
+    pending_permission: null,
+    modes: null,
+    current_mode: null,
+    config_options: null,
+    prompt_capabilities: null,
+    usage: null,
+    fork_supported: false,
+    available_commands: [],
+    selectors_ready: true,
+    last_error: null,
+    event_seq: 0,
+  }
 }
 
 function streamHarness() {
@@ -45,7 +57,9 @@ function streamHarness() {
     attach: () => stream.attach(ID, {}, handlers),
     emit: (event: OpenABSseEvent) => source(event),
     types: () =>
-      handlers.onEvent.mock.calls.map(([event]: [EventEnvelope]) => event.type),
+      handlers.onEvent.mock.calls.map(
+        (call) => (call[0] as EventEnvelope).type
+      ),
   }
 }
 
