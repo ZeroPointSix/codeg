@@ -115,6 +115,20 @@ function isClientStreamStall(code: string | null | undefined): boolean {
   return code === "stream_stalled"
 }
 
+function rawSidebarStatus(
+  event: OpenABSseEvent,
+  snapshotStatus: string
+): string {
+  if (event.event === "exited") return "exited"
+  if (event.event === "error") return "error"
+  if (event.data && typeof event.data === "object") {
+    const status = (event.data as { snapshot?: { status?: unknown } }).snapshot
+      ?.status
+    if (typeof status === "string") return status
+  }
+  return snapshotStatus
+}
+
 function lifecycleEnvelopes(
   event: OpenABSseEvent,
   connectionId: string,
@@ -341,10 +355,9 @@ export class OpenABEventStream implements EventStream {
     subscription.lastSnapshot = stamped
     subscription.handlers.onSnapshot(stamped, stamped.event_seq)
     if (previous?.status !== snapshot.status) {
-      const raw = boundary.data as { snapshot?: { status?: string } }
       this.dependencies.onStatus?.(
         subscription.connectionId,
-        raw.snapshot?.status ?? snapshot.status
+        rawSidebarStatus(boundary, snapshot.status)
       )
     }
     this.scheduleStallCheck(subscription)
